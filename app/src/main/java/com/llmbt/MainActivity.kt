@@ -30,7 +30,7 @@ class MainActivity : AppCompatActivity() {
 
         input = EditText(this).apply {
             hint = "Digite uma mensagem..."
-            singleLine = false
+            isSingleLine = false
             minLines = 1
             maxLines = 4
         }
