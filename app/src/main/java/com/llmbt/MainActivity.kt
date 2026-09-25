@@ -9,6 +9,13 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
+    companion object {
+        init {
+            System.loadLibrary("llmbt")
+        }
+    }
+
+    private external fun stringFromNative(): String
     private lateinit var chat: TextView
     private lateinit var input: EditText
 
@@ -16,7 +23,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         chat = TextView(this).apply {
-            text = "LLM BT\\n\\nV0.1 — chat local\\nModelo ainda não carregado."
+            text = "LLM BT\\n\\nV0.1 — chat local\\nMotor nativo: " + stringFromNative() + "\\nModelo ainda não carregado."
             textSize = 16f
             setPadding(24, 24, 24, 24)
         }
