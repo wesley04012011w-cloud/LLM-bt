@@ -21,16 +21,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        continue-on-error: false
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK packages
-        uses: android-actions/sdkmanager@v2
-        with:
-          packages: |
-            platforms;android-36
-            build-tools;36.0.0
-            ndk;29.0.13113456
-            cmake;3.31.6
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
