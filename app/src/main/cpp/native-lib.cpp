@@ -277,7 +277,7 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
 
     std::vector<ConversationMessage> candidate = g_conversation;
     candidate.push_back({"user", user_text});
-    const std::string prompt = format_prompt(candidate);
+    const std::string prompt = format_prompt(candidate, true);
 
     std::vector<llama_token> tokens;
     if (!tokenize(vocab, prompt, tokens, false)) {
