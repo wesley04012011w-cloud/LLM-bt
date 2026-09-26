@@ -21,6 +21,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private var nativeLoaded = false
     private var modelLoaded = false
+    @Volatile private var streamingResponseStarted = false
 
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
@@ -119,6 +120,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         input.isEnabled = false
+        streamingResponseStarted = false
         chat.append("\n\nVocê: $message\nLLM: gerando...")
         input.text.clear()
         AppLogger.write("Generation requested")
@@ -128,7 +130,9 @@ class MainActivity : AppCompatActivity() {
                 val result = generateText(message)
                 AppLogger.write("Generation result: " + result.replace("\n", " | "))
                 runOnUiThread {
-                    chat.text = chat.text.toString().replace("LLM: gerando...", "LLM: $result")
+                    if (!streamingResponseStarted) {
+                        chat.text = chat.text.toString().replace("LLM: gerando...", "LLM: $result")
+                    }
                     input.isEnabled = true
                 }
             } catch (throwable: Throwable) {
@@ -139,6 +143,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    fun appendGeneratedToken(piece: String) {
+        runOnUiThread {
+            if (!streamingResponseStarted) {
+                chat.text = chat.text.toString().replace("LLM: gerando...", "LLM:")
+                streamingResponseStarted = true
+            }
+            chat.append(piece)
+        }
     }
 
     private fun openModelPicker() {
