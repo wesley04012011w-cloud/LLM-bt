@@ -1,0 +1,21 @@
+# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+
+# Signing keys and local signing data
+*.jks
+*.keystore
+*.p12
+*.pfx
+signing/
+keystore.properties
+
+# Generated APKs
+*.apk
+*.aab
