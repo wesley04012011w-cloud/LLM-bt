@@ -37,14 +37,26 @@ jobs:
       - name: Build release APK
         run: gradle assembleRelease --no-daemon
 
-      - name: Verify APK
+      - name: Verify unsigned APK
         run: |
           ls -lah app/build/outputs/apk/release/
           test -f app/build/outputs/apk/release/app-release-unsigned.apk
 
-      - name: Upload APK
+      - name: Generate test signing key
+        env:
+          SIGNING_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-LLM-BT-test
+        run: |
+          bash scripts/generate-test-signing-key.sh
+
+      - name: Sign release APK
+        env:
+          SIGNING_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-LLM-BT-test
+        run: |
+          bash scripts/sign-release-apk.sh
+
+      - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: LLM-BT-release
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          name: LLM-BT-release-signed
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
