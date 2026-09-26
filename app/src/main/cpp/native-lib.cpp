@@ -36,6 +36,12 @@ static constexpr const char * DEFAULT_SYSTEM_PROMPT =
 
 static std::string g_system_prompt = DEFAULT_SYSTEM_PROMPT;
 
+static float g_temperature = 0.30f;
+static float g_min_p = 0.15f;
+static float g_repeat_penalty = 1.05f;
+static float g_top_p = 0.95f;
+static int32_t g_top_k = 40;
+
 static void stream_piece(JNIEnv *env, jobject activity, const std::string &text) {
     if (text.empty()) return;
     jclass cls = env->GetObjectClass(activity);
@@ -183,6 +189,22 @@ Java_com_llmbt_MainActivity_setSystemPrompt(JNIEnv *env, jobject, jstring jpromp
     g_cached_tokens.clear();
     g_cache_valid = false;
     g_conversation.push_back({"system", g_system_prompt});
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_llmbt_MainActivity_setSamplingParams(
+    JNIEnv *, jobject,
+    jfloat temperature,
+    jfloat min_p,
+    jfloat repeat_penalty,
+    jfloat top_p,
+    jint top_k
+) {
+    g_temperature = std::clamp(static_cast<float>(temperature), 0.0f, 2.0f);
+    g_min_p = std::clamp(static_cast<float>(min_p), 0.0f, 1.0f);
+    g_repeat_penalty = std::clamp(static_cast<float>(repeat_penalty), 0.01f, 2.0f);
+    g_top_p = std::clamp(static_cast<float>(top_p), 0.01f, 1.0f);
+    g_top_k = std::clamp(static_cast<int32_t>(top_k), 0, 1000);
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -348,7 +370,27 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
         return env->NewStringUTF("ERRO [sampler] não foi possível criar o sampler.");
     }
 
-    llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+    llama_sampler_chain_add(
+        sampler,
+        llama_sampler_init_penalties(
+            llama_vocab_n_tokens(vocab),
+            64,
+            g_repeat_penalty,
+            0.0f,
+            0.0f
+        )
+    );
+    if (g_top_k > 0) {
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(g_top_k));
+    }
+    if (g_top_p < 1.0f) {
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(g_top_p, 1));
+    }
+    if (g_min_p > 0.0f) {
+        llama_sampler_chain_add(sampler, llama_sampler_init_min_p(g_min_p, 1));
+    }
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(g_temperature));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     std::string output;
     output.reserve(2048);
@@ -471,7 +513,10 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
               " ms | 1o token=" + std::to_string(first_token_ms) +
               " ms | geracao=" + std::to_string(generation_ms) +
               " ms | tokens=" + std::to_string(generated_tokens) +
-              " | tok/s=" + std::to_string(tokens_per_second);
+              " | tok/s=" + std::to_string(tokens_per_second) +
+              " | temp=" + std::to_string(g_temperature) +
+              " | min_p=" + std::to_string(g_min_p) +
+              " | repeat=" + std::to_string(g_repeat_penalty);
 
     return env->NewStringUTF(output.c_str());
 }
