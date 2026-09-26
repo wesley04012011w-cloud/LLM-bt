@@ -21,13 +21,20 @@ static std::vector<ConversationMessage> g_conversation;
 static std::vector<llama_token> g_cached_tokens;
 static bool g_cache_valid = false;
 
-static constexpr const char * SYSTEM_PROMPT =
+static constexpr const char * DEFAULT_SYSTEM_PROMPT =
     "Você é o LLM-BT, um assistente local. "
+    "Seu nome é LLM-BT. "
+    "Quando alguém perguntar seu nome, responda que seu nome é LLM-BT. "
+    "Quando alguém perguntar quem você é, diga que você é o LLM-BT, um assistente local. "
+    "Nunca invente outro nome para si mesmo. "
+    "Nunca diga que seu nome é Alex, Ana, João, Lúcio ou qualquer outro nome. "
+    "Você foi criado como parte do projeto LLM-BT. "
     "Responda de forma natural, clara e direta. "
     "Prefira uma conversa humana e espontânea, evitando respostas robóticas, excessivamente formais ou desnecessariamente longas. "
-
     "Quando uma explicação simples for suficiente, não complique. "
     "Não invente informações quando não souber a resposta.";
+
+static std::string g_system_prompt = DEFAULT_SYSTEM_PROMPT;
 
 static void stream_piece(JNIEnv *env, jobject activity, const std::string &text) {
     if (text.empty()) return;
@@ -148,6 +155,26 @@ Java_com_llmbt_MainActivity_stringFromNative(JNIEnv *env, jobject) {
     return env->NewStringUTF("llama.cpp nativo conectado");
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_llmbt_MainActivity_setSystemPrompt(JNIEnv *env, jobject, jstring jprompt) {
+    if (!jprompt) return;
+
+    const char *prompt = env->GetStringUTFChars(jprompt, nullptr);
+    if (!prompt) return;
+
+    g_system_prompt = prompt;
+    env->ReleaseStringUTFChars(jprompt, prompt);
+
+    if (g_context) {
+        llama_memory_clear(llama_get_memory(g_context), true);
+    }
+
+    g_conversation.clear();
+    g_cached_tokens.clear();
+    g_cache_valid = false;
+    g_conversation.push_back({"system", g_system_prompt});
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     const char *path = env->GetStringUTFChars(jpath, nullptr);
@@ -222,7 +249,7 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     result += std::to_string(llama_n_ctx(g_context)) + " tokens";
     result += "\nThreads: " + std::to_string(n_threads);
     result += "\nTempo de carga: " + std::to_string(load_ms) + " ms";
-    g_conversation.push_back({"system", SYSTEM_PROMPT});
+    g_conversation.push_back({"system", g_system_prompt});
 
     return env->NewStringUTF(result.c_str());
 }
