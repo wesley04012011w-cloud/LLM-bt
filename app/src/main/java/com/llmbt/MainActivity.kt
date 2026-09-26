@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var input: EditText
     private lateinit var sendButton: Button
     private lateinit var systemPromptButton: Button
+    private lateinit var samplingButton: Button
     private lateinit var root: LinearLayout
     private lateinit var preferences: android.content.SharedPreferences
     private var nativeLoaded = false
@@ -38,11 +39,28 @@ class MainActivity : AppCompatActivity() {
     private external fun loadModel(path: String): String
     private external fun generateText(prompt: String): String
     private external fun setSystemPrompt(prompt: String)
+    private external fun setSamplingParams(
+        temperature: Float,
+        minP: Float,
+        repeatPenalty: Float,
+        topP: Float,
+        topK: Int
+    )
 
     companion object {
         private const val PICK_MODEL = 1001
         private const val PREFS_NAME = "llm_bt_settings"
         private const val SYSTEM_PROMPT_KEY = "system_prompt"
+        private const val TEMPERATURE_KEY = "sampling_temperature"
+        private const val MIN_P_KEY = "sampling_min_p"
+        private const val REPEAT_PENALTY_KEY = "sampling_repeat_penalty"
+        private const val TOP_P_KEY = "sampling_top_p"
+        private const val TOP_K_KEY = "sampling_top_k"
+        private const val DEFAULT_TEMPERATURE = 0.30f
+        private const val DEFAULT_MIN_P = 0.15f
+        private const val DEFAULT_REPEAT_PENALTY = 1.05f
+        private const val DEFAULT_TOP_P = 0.95f
+        private const val DEFAULT_TOP_K = 40
         private const val DEFAULT_SYSTEM_PROMPT = """Você é o LLM-BT, um assistente local.
 Seu nome é LLM-BT.
 Quando alguém perguntar seu nome, responda que seu nome é LLM-BT.
@@ -65,9 +83,13 @@ Não invente informações quando não souber a resposta."""
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(6))
+        }
+
+        val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(8))
         }
 
         val title = TextView(this).apply {
@@ -84,10 +106,14 @@ Não invente informações quando não souber a resposta."""
             setOnClickListener { openModelPicker() }
         }
 
-        topBar.addView(
-            title,
-            LinearLayout.LayoutParams(0, dp(48), 1f)
-        )
+        titleRow.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
+        titleRow.addView(importButton, LinearLayout.LayoutParams(dp(150), dp(48)))
+
+        val settingsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         systemPromptButton = Button(this).apply {
             text = "System"
             textSize = 13f
@@ -95,16 +121,18 @@ Não invente informações quando não souber a resposta."""
             setOnClickListener { showSystemPromptDialog() }
         }
 
-        topBar.addView(
-            systemPromptButton,
-            LinearLayout.LayoutParams(dp(88), dp(48)).apply {
-                marginEnd = dp(6)
-            }
-        )
-        topBar.addView(
-            importButton,
-            LinearLayout.LayoutParams(dp(150), dp(48))
-        )
+        samplingButton = Button(this).apply {
+            text = "Sampling"
+            textSize = 13f
+            isAllCaps = false
+            setOnClickListener { showSamplingDialog() }
+        }
+
+        settingsRow.addView(systemPromptButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(4) })
+        settingsRow.addView(samplingButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(4) })
+
+        topBar.addView(titleRow, LinearLayout.LayoutParams(-1, dp(48)))
+        topBar.addView(settingsRow, LinearLayout.LayoutParams(-1, dp(48)))
 
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -235,6 +263,7 @@ Não invente informações quando não souber a resposta."""
         input.isEnabled = false
         sendButton.isEnabled = false
         systemPromptButton.isEnabled = false
+        samplingButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
         currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
@@ -255,6 +284,7 @@ Não invente informações quando não souber a resposta."""
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
+                    samplingButton.isEnabled = true
                     scrollToBottom()
                 }
             } catch (throwable: Throwable) {
@@ -416,6 +446,109 @@ Não invente informações quando não souber a resposta."""
         dialog.show()
     }
 
+    private fun showSamplingDialog() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+        }
+
+        fun addField(label: String, value: String): EditText {
+            container.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(Color.rgb(75, 75, 75))
+                setPadding(0, dp(6), 0, dp(2))
+            })
+            return EditText(this).apply {
+                setText(value)
+                textSize = 15f
+                singleLine = true
+                inputType = InputType.TYPE_CLASS_NUMBER or
+                    InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                    InputType.TYPE_NUMBER_FLAG_SIGNED
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                background = roundedBackground(Color.rgb(245, 245, 245), 10f)
+                container.addView(this, LinearLayout.LayoutParams(-1, dp(46)))
+            }
+        }
+
+        val temperature = addField("Temperature (0 = determinístico)",
+            preferences.getFloat(TEMPERATURE_KEY, DEFAULT_TEMPERATURE).toString())
+        val minP = addField("Min-P (0 = desativado)",
+            preferences.getFloat(MIN_P_KEY, DEFAULT_MIN_P).toString())
+        val repeatPenalty = addField("Repetition penalty (1 = desativado)",
+            preferences.getFloat(REPEAT_PENALTY_KEY, DEFAULT_REPEAT_PENALTY).toString())
+        val topP = addField("Top-P (1 = desativado)",
+            preferences.getFloat(TOP_P_KEY, DEFAULT_TOP_P).toString())
+        val topK = addField("Top-K (0 = desativado)",
+            preferences.getInt(TOP_K_KEY, DEFAULT_TOP_K).toString())
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Sampling")
+            .setView(container)
+            .setNegativeButton("Cancelar", null)
+            .setNeutralButton("Restaurar padrão", null)
+            .setPositiveButton("Salvar", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                temperature.setText(DEFAULT_TEMPERATURE.toString())
+                minP.setText(DEFAULT_MIN_P.toString())
+                repeatPenalty.setText(DEFAULT_REPEAT_PENALTY.toString())
+                topP.setText(DEFAULT_TOP_P.toString())
+                topK.setText(DEFAULT_TOP_K.toString())
+            }
+
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val tempValue = temperature.text.toString().toFloatOrNull()
+                val minPValue = minP.text.toString().toFloatOrNull()
+                val repeatValue = repeatPenalty.text.toString().toFloatOrNull()
+                val topPValue = topP.text.toString().toFloatOrNull()
+                val topKValue = topK.text.toString().toIntOrNull()
+
+                if (tempValue == null || tempValue < 0f || tempValue > 2f) {
+                    temperature.error = "Use um valor entre 0 e 2."
+                    return@setOnClickListener
+                }
+                if (minPValue == null || minPValue < 0f || minPValue > 1f) {
+                    minP.error = "Use um valor entre 0 e 1."
+                    return@setOnClickListener
+                }
+                if (repeatValue == null || repeatValue <= 0f || repeatValue > 2f) {
+                    repeatPenalty.error = "Use um valor maior que 0 e até 2."
+                    return@setOnClickListener
+                }
+                if (topPValue == null || topPValue <= 0f || topPValue > 1f) {
+                    topP.error = "Use um valor maior que 0 e até 1."
+                    return@setOnClickListener
+                }
+                if (topKValue == null || topKValue < 0 || topKValue > 1000) {
+                    topK.error = "Use um inteiro entre 0 e 1000."
+                    return@setOnClickListener
+                }
+
+                preferences.edit()
+                    .putFloat(TEMPERATURE_KEY, tempValue)
+                    .putFloat(MIN_P_KEY, minPValue)
+                    .putFloat(REPEAT_PENALTY_KEY, repeatValue)
+                    .putFloat(TOP_P_KEY, topPValue)
+                    .putInt(TOP_K_KEY, topKValue)
+                    .apply()
+
+                if (nativeLoaded) {
+                    setSamplingParams(tempValue, minPValue, repeatValue, topPValue, topKValue)
+                }
+
+                addStatusMessage("Sampling atualizado.", dark = false)
+                AppLogger.write("Sampling updated: temp=$tempValue min_p=$minPValue repeat=$repeatValue top_p=$topPValue top_k=$topKValue")
+                dialog.dismiss()
+            }
+        }
+
+        dialog.show()
+    }
+
     private fun openModelPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -471,6 +604,13 @@ Não invente informações quando não souber a resposta."""
                     System.loadLibrary("llmbt")
                     nativeLoaded = true
                     setSystemPrompt(preferences.getString(SYSTEM_PROMPT_KEY, DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT)
+                    setSamplingParams(
+                        preferences.getFloat(TEMPERATURE_KEY, DEFAULT_TEMPERATURE),
+                        preferences.getFloat(MIN_P_KEY, DEFAULT_MIN_P),
+                        preferences.getFloat(REPEAT_PENALTY_KEY, DEFAULT_REPEAT_PENALTY),
+                        preferences.getFloat(TOP_P_KEY, DEFAULT_TOP_P),
+                        preferences.getInt(TOP_K_KEY, DEFAULT_TOP_K)
+                    )
                     AppLogger.write("Native library loaded successfully")
                 }
 
