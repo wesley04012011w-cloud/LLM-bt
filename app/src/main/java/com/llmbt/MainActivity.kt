@@ -462,7 +462,7 @@ Não invente informações quando não souber a resposta."""
             return EditText(this).apply {
                 setText(value)
                 textSize = 15f
-                singleLine = true
+                setSingleLine(true)
                 inputType = InputType.TYPE_CLASS_NUMBER or
                     InputType.TYPE_NUMBER_FLAG_DECIMAL or
                     InputType.TYPE_NUMBER_FLAG_SIGNED
