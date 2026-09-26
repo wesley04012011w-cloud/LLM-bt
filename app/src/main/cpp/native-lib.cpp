@@ -18,6 +18,8 @@ struct ConversationMessage {
 };
 
 static std::vector<ConversationMessage> g_conversation;
+static std::vector<llama_token> g_cached_tokens;
+static bool g_cache_valid = false;
 
 static constexpr const char * SYSTEM_PROMPT =
     "Você é o LLM-BT, um assistente local. "
@@ -159,6 +161,8 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     if (g_context) { llama_free(g_context); g_context = nullptr; }
     if (g_model) { llama_model_free(g_model); g_model = nullptr; }
     g_conversation.clear();
+    g_cached_tokens.clear();
+    g_cache_valid = false;
 
     const auto load_start = std::chrono::steady_clock::now();
 
@@ -208,7 +212,9 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     llama_model_desc(g_model, desc, sizeof(desc));
     uint64_t size_mb = llama_model_size(g_model) / (1024ULL * 1024ULL);
 
-    const auto load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - load_start).count();
+    const auto load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - load_start
+    ).count();
 
     std::string result = "Modelo carregado!\nArquitetura: ";
     result += desc[0] ? desc : "desconhecida";
@@ -242,31 +248,76 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
     }
 
     const uint32_t n_ctx = llama_n_ctx(g_context);
-    constexpr int MAX_GENERATION_TOKENS = 96;
+    constexpr int MAX_GENERATION_TOKENS = 192;
+
     if (tokens.size() + MAX_GENERATION_TOKENS >= n_ctx) {
-        return env->NewStringUTF("ERRO [contexto] conversa grande demais para o contexto atual.");
+        return env->NewStringUTF(
+            "ERRO [contexto] conversa grande demais para o contexto atual. "
+            "Ainda não implementei a compactação automática do histórico."
+        );
     }
 
-    llama_memory_clear(llama_get_memory(g_context), true);
+    bool cache_hit = false;
+    size_t reused_tokens = 0;
 
-    // Use the same single-sequence batch helper as the current llama.cpp examples.
-    llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
+    if (g_cache_valid &&
+        tokens.size() >= g_cached_tokens.size() &&
+        std::equal(g_cached_tokens.begin(), g_cached_tokens.end(), tokens.begin())) {
+        cache_hit = true;
+        reused_tokens = g_cached_tokens.size();
+    }
 
     const auto prompt_start = std::chrono::steady_clock::now();
-    const int decode_prompt = llama_decode(g_context, batch);
-    const auto prompt_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - prompt_start).count();
+
+    if (!cache_hit) {
+        llama_memory_clear(llama_get_memory(g_context), true);
+        g_cached_tokens.clear();
+        g_cache_valid = false;
+    }
+
+    const size_t tokens_to_decode = cache_hit ? tokens.size() - reused_tokens : tokens.size();
+
+    int decode_prompt = 0;
+    if (tokens_to_decode > 0) {
+        llama_token *decode_data = cache_hit
+            ? const_cast<llama_token *>(tokens.data() + reused_tokens)
+            : const_cast<llama_token *>(tokens.data());
+
+        llama_batch batch = llama_batch_get_one(
+            decode_data,
+            static_cast<int32_t>(tokens_to_decode)
+        );
+
+        decode_prompt = llama_decode(g_context, batch);
+    }
+
+    const auto prompt_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - prompt_start
+    ).count();
+
     if (decode_prompt != 0) {
+        g_cached_tokens.clear();
+        g_cache_valid = false;
+        llama_memory_clear(llama_get_memory(g_context), true);
         return env->NewStringUTF(result_error("prompt", decode_prompt).c_str());
     }
 
     llama_sampler_chain_params sp = llama_sampler_chain_default_params();
     llama_sampler *sampler = llama_sampler_chain_init(sp);
-    if (!sampler) return env->NewStringUTF("ERRO [sampler] não foi possível criar o sampler.");
+    if (!sampler) {
+        g_cached_tokens.clear();
+        g_cache_valid = false;
+        llama_memory_clear(llama_get_memory(g_context), true);
+        return env->NewStringUTF("ERRO [sampler] não foi possível criar o sampler.");
+    }
 
     llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
     std::string output;
-    output.reserve(1024);
+    output.reserve(2048);
+    std::vector<llama_token> generated_token_ids;
+    generated_token_ids.reserve(MAX_GENERATION_TOKENS);
+
     int generated_tokens = 0;
     long long first_token_ms = -1;
     const auto generation_start = std::chrono::steady_clock::now();
@@ -278,36 +329,70 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
             break;
         }
 
+        generated_token_ids.push_back(token);
+
         const std::string token_piece = piece(vocab, token);
         if (!token_piece.empty()) {
             output += token_piece;
             ++generated_tokens;
+
             if (first_token_ms < 0) {
-                first_token_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - generation_start).count();
+                first_token_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - generation_start
+                ).count();
             }
+
             stream_piece(env, activity, token_piece);
         }
 
         llama_batch next_batch = llama_batch_get_one(
-            const_cast<llama_token *>(&token), 1
+            const_cast<llama_token *>(&token),
+            1
         );
 
         const int decode_next = llama_decode(g_context, next_batch);
         if (decode_next != 0) {
             llama_sampler_free(sampler);
+            g_cached_tokens.clear();
+            g_cache_valid = false;
+            llama_memory_clear(llama_get_memory(g_context), true);
             return env->NewStringUTF(result_error("geração", decode_next).c_str());
         }
     }
 
     llama_sampler_free(sampler);
 
-    const auto generation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - generation_start).count();
-    const double tokens_per_second = generation_ms > 0 ? (generated_tokens * 1000.0 / static_cast<double>(generation_ms)) : 0.0;
-    if (output.empty()) output = "(o modelo terminou sem gerar texto)";
+    const auto generation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - generation_start
+    ).count();
+
+    const double tokens_per_second =
+        generation_ms > 0
+            ? (generated_tokens * 1000.0 / static_cast<double>(generation_ms))
+            : 0.0;
+
+    if (output.empty()) {
+        output = "(o modelo terminou sem gerar texto)";
+    }
+
+    g_cached_tokens = tokens;
+    g_cached_tokens.insert(
+        g_cached_tokens.end(),
+        generated_token_ids.begin(),
+        generated_token_ids.end()
+    );
+    g_cache_valid = true;
 
     g_conversation = std::move(candidate);
     g_conversation.push_back({"assistant", output});
 
-    output += "\n\n[perf] prefill=" + std::to_string(prompt_ms) + " ms | 1o token=" + std::to_string(first_token_ms) + " ms | geracao=" + std::to_string(generation_ms) + " ms | tokens=" + std::to_string(generated_tokens) + " | tok/s=" + std::to_string(tokens_per_second);
+    output += "\n\n[perf] cache=" + std::string(cache_hit ? "HIT" : "MISS") +
+              " | reutilizados=" + std::to_string(reused_tokens) +
+              " | prefill=" + std::to_string(prompt_ms) +
+              " ms | 1o token=" + std::to_string(first_token_ms) +
+              " ms | geracao=" + std::to_string(generation_ms) +
+              " ms | tokens=" + std::to_string(generated_tokens) +
+              " | tok/s=" + std::to_string(tokens_per_second);
+
     return env->NewStringUTF(output.c_str());
 }
