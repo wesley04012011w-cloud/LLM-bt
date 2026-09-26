@@ -200,6 +200,7 @@ class MainActivity : AppCompatActivity() {
                 AppLogger.write("Loading GGUF: " + modelFile.absolutePath)
                 val result = loadModel(modelFile.absolutePath)
                 AppLogger.write("Native load result: " + result.replace("\n", " | "))
+                modelLoaded = result.startsWith("Modelo carregado!")
 
                 runOnUiThread {
                     chat.append("\n\n$result")
