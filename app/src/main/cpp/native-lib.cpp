@@ -4,10 +4,27 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <unistd.h>
+#include <chrono>
 
 static llama_model *g_model = nullptr;
 static llama_context *g_context = nullptr;
 static bool g_backend_initialized = false;
+
+static void stream_piece(JNIEnv *env, jobject activity, const std::string &text) {
+    if (text.empty()) return;
+    jclass cls = env->GetObjectClass(activity);
+    if (!cls) return;
+    jmethodID method = env->GetMethodID(cls, "appendGeneratedToken", "(Ljava/lang/String;)V");
+    if (!method) {
+        env->ExceptionClear();
+        return;
+    }
+    jstring piece = env->NewStringUTF(text.c_str());
+    if (!piece) return;
+    env->CallVoidMethod(activity, method, piece);
+    env->DeleteLocalRef(piece);
+}
 
 static std::string format_prompt(const std::string &text) {
     const char *tmpl = llama_model_chat_template(g_model, nullptr);
@@ -87,11 +104,15 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     if (!g_model) return env->NewStringUTF("Erro: não foi possível carregar o arquivo GGUF.");
 
     llama_context_params cp = llama_context_default_params();
+    const long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+    const int n_threads = static_cast<int>(std::max(2L, std::min(4L, cpu_count > 2 ? cpu_count - 2 : cpu_count)));
+
+    llama_context_params cp = llama_context_default_params();
     cp.n_ctx = 2048;
     cp.n_batch = 512;
-    cp.n_ubatch = 256;
-    cp.n_threads = 4;
-    cp.n_threads_batch = 4;
+    cp.n_ubatch = 512;
+    cp.n_threads = n_threads;
+    cp.n_threads_batch = n_threads;
 
     g_context = llama_init_from_model(g_model, cp);
     if (!g_context) {
@@ -108,6 +129,7 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     result += desc[0] ? desc : "desconhecida";
     result += "\nTamanho: " + std::to_string(size_mb) + " MB\nContexto: ";
     result += std::to_string(llama_n_ctx(g_context)) + " tokens";
+    result += "\nThreads: " + std::to_string(n_threads);
     return env->NewStringUTF(result.c_str());
 }
 
@@ -129,7 +151,8 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject, jstring jprompt) 
     }
 
     const uint32_t n_ctx = llama_n_ctx(g_context);
-    if (tokens.size() + 128 >= n_ctx) {
+    constexpr int MAX_GENERATION_TOKENS = 96;
+    if (tokens.size() + MAX_GENERATION_TOKENS >= n_ctx) {
         return env->NewStringUTF("ERRO [contexto] prompt grande demais.");
     }
 
@@ -152,7 +175,7 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject, jstring jprompt) 
     std::string output;
     output.reserve(1024);
 
-    for (int i = 0; i < 128; ++i) {
+    for (int i = 0; i < MAX_GENERATION_TOKENS; ++i) {
         const llama_token token = llama_sampler_sample(sampler, g_context, -1);
 
         if (llama_vocab_is_eog(vocab, token)) {
@@ -160,9 +183,10 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject, jstring jprompt) 
         }
 
         const std::string token_piece = piece(vocab, token);
-        if (!token_piece.empty()) output += token_piece;
-
-        llama_sampler_accept(sampler, token);
+        if (!token_piece.empty()) {
+            output += token_piece;
+            stream_piece(env, activity, token_piece);
+        }
 
         llama_batch next_batch = llama_batch_get_one(
             const_cast<llama_token *>(&token), 1
