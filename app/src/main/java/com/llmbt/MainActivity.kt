@@ -20,9 +20,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var input: EditText
     private lateinit var root: LinearLayout
     private var nativeLoaded = false
+    private var modelLoaded = false
 
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
+    private external fun generateText(prompt: String): String
 
     companion object {
         private const val PICK_MODEL = 1001
@@ -56,17 +58,7 @@ class MainActivity : AppCompatActivity() {
 
         val send = Button(this).apply {
             text = "Enviar"
-            setOnClickListener {
-                val message = input.text.toString().trim()
-                if (message.isEmpty()) return@setOnClickListener
-
-                chat.append(
-                    "\n\nVocê: " + message +
-                    "\nLLM: geração de texto será conectada no próximo passo."
-                )
-                input.text.clear()
-                AppLogger.write("Message sent")
-            }
+            setOnClickListener { sendMessage() }
         }
 
         val controls = LinearLayout(this).apply {
@@ -116,10 +108,43 @@ class MainActivity : AppCompatActivity() {
         AppLogger.write("MainActivity.onCreate completed")
     }
 
+    private fun sendMessage() {
+        val message = input.text.toString().trim()
+        if (message.isEmpty()) return
+
+        if (!modelLoaded) {
+            chat.append("\n\nVocê: $message\nLLM: importe um modelo GGUF primeiro.")
+            input.text.clear()
+            return
+        }
+
+        input.isEnabled = false
+        chat.append("\n\nVocê: $message\nLLM: gerando...")
+        input.text.clear()
+        AppLogger.write("Generation requested")
+
+        Thread {
+            try {
+                val result = generateText(message)
+                AppLogger.write("Generation result: " + result.replace("\n", " | "))
+                runOnUiThread {
+                    chat.text = chat.text.toString().replace("LLM: gerando...", "LLM: $result")
+                    input.isEnabled = true
+                }
+            } catch (throwable: Throwable) {
+                AppLogger.exception("TEXT GENERATION FAILED", throwable)
+                runOnUiThread {
+                    chat.append("\nERRO: " + (throwable.message ?: throwable.javaClass.simpleName))
+                    input.isEnabled = true
+                }
+            }
+        }.start()
+    }
+
     private fun openModelPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/octet-stream"
+            type = "*/*"
         }
         startActivityForResult(intent, PICK_MODEL)
         AppLogger.write("GGUF picker opened")
