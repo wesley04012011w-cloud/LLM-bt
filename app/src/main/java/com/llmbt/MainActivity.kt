@@ -26,7 +26,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scrollView: ScrollView
     private lateinit var input: EditText
     private lateinit var sendButton: Button
+    private lateinit var systemPromptButton: Button
     private lateinit var root: LinearLayout
+    private lateinit var preferences: android.content.SharedPreferences
     private var nativeLoaded = false
     private var modelLoaded = false
     @Volatile private var streamingResponseStarted = false
@@ -35,9 +37,24 @@ class MainActivity : AppCompatActivity() {
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
     private external fun generateText(prompt: String): String
+    private external fun setSystemPrompt(prompt: String)
 
     companion object {
         private const val PICK_MODEL = 1001
+        private const val PREFS_NAME = "llm_bt_settings"
+        private const val SYSTEM_PROMPT_KEY = "system_prompt"
+        private const val DEFAULT_SYSTEM_PROMPT = """Você é o LLM-BT, um assistente local.
+Seu nome é LLM-BT.
+Quando alguém perguntar seu nome, responda que seu nome é LLM-BT.
+Quando alguém perguntar quem você é, diga que você é o LLM-BT, um assistente local.
+Nunca invente outro nome para si mesmo.
+Nunca diga que seu nome é Alex, Ana, João, Lúcio ou qualquer outro nome.
+Você foi criado como parte do projeto LLM-BT.
+
+Responda de forma natural, clara e direta.
+Prefira uma conversa humana e espontânea, evitando respostas robóticas, excessivamente formais ou desnecessariamente longas.
+Quando uma explicação simples for suficiente, não complique.
+Não invente informações quando não souber a resposta."""
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +62,7 @@ class MainActivity : AppCompatActivity() {
 
         AppLogger.write("MainActivity.onCreate started")
         AppLogger.write("Native engine will be loaded on demand")
+        preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -69,6 +87,19 @@ class MainActivity : AppCompatActivity() {
         topBar.addView(
             title,
             LinearLayout.LayoutParams(0, dp(48), 1f)
+        )
+        systemPromptButton = Button(this).apply {
+            text = "System"
+            textSize = 13f
+            isAllCaps = false
+            setOnClickListener { showSystemPromptDialog() }
+        }
+
+        topBar.addView(
+            systemPromptButton,
+            LinearLayout.LayoutParams(dp(88), dp(48)).apply {
+                marginEnd = dp(6)
+            }
         )
         topBar.addView(
             importButton,
@@ -203,6 +234,7 @@ class MainActivity : AppCompatActivity() {
 
         input.isEnabled = false
         sendButton.isEnabled = false
+        systemPromptButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
         currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
@@ -222,6 +254,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     input.isEnabled = true
                     sendButton.isEnabled = true
+                    systemPromptButton.isEnabled = true
                     scrollToBottom()
                 }
             } catch (throwable: Throwable) {
@@ -236,6 +269,7 @@ class MainActivity : AppCompatActivity() {
                     )
                     input.isEnabled = true
                     sendButton.isEnabled = true
+                    systemPromptButton.isEnabled = true
                     scrollToBottom()
                 }
             }
@@ -324,6 +358,64 @@ class MainActivity : AppCompatActivity() {
         scrollToBottom()
     }
 
+    private fun showSystemPromptDialog() {
+        val editor = EditText(this).apply {
+            setText(preferences.getString(SYSTEM_PROMPT_KEY, DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT)
+            textSize = 15f
+            gravity = Gravity.TOP or Gravity.START
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            minLines = 12
+            maxLines = 18
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = roundedBackground(Color.rgb(245, 245, 245), 12f)
+            selectAllOnFocus = false
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+            addView(editor, LinearLayout.LayoutParams(-1, dp(260)))
+        }
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("System prompt")
+            .setView(container)
+            .setNegativeButton("Cancelar", null)
+            .setNeutralButton("Restaurar padrão", null)
+            .setPositiveButton("Salvar", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                editor.setText(DEFAULT_SYSTEM_PROMPT)
+                editor.setSelection(editor.text.length)
+            }
+
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val prompt = editor.text.toString().trim()
+                if (prompt.isEmpty()) {
+                    editor.error = "O system prompt não pode ficar vazio."
+                    return@setOnClickListener
+                }
+
+                preferences.edit().putString(SYSTEM_PROMPT_KEY, prompt).apply()
+
+                if (nativeLoaded) {
+                    setSystemPrompt(prompt)
+                }
+
+                addStatusMessage("System prompt atualizado.", dark = false)
+                AppLogger.write("System prompt updated from UI")
+                dialog.dismiss()
+            }
+
+            editor.requestFocus()
+            dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        }
+
+        dialog.show()
+    }
+
     private fun openModelPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -378,6 +470,7 @@ class MainActivity : AppCompatActivity() {
                     AppLogger.write("Loading native library: llmbt")
                     System.loadLibrary("llmbt")
                     nativeLoaded = true
+                    setSystemPrompt(preferences.getString(SYSTEM_PROMPT_KEY, DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT)
                     AppLogger.write("Native library loaded successfully")
                 }
 
