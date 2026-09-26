@@ -12,6 +12,21 @@ static llama_model *g_model = nullptr;
 static llama_context *g_context = nullptr;
 static bool g_backend_initialized = false;
 
+struct ConversationMessage {
+    std::string role;
+    std::string content;
+};
+
+static std::vector<ConversationMessage> g_conversation;
+
+static constexpr const char * SYSTEM_PROMPT =
+    "Você é o LLM-BT, um assistente local. "
+    "Responda de forma natural, clara e direta. "
+    "Prefira uma conversa humana e espontânea, evitando respostas robóticas, excessivamente formais ou desnecessariamente longas. "
+    "Responda no mesmo idioma do usuário, salvo quando ele pedir outro idioma. "
+    "Quando uma explicação simples for suficiente, não complique. "
+    "Não invente informações quando não souber a resposta.";
+
 static void stream_piece(JNIEnv *env, jobject activity, const std::string &text) {
     if (text.empty()) return;
     jclass cls = env->GetObjectClass(activity);
@@ -27,23 +42,55 @@ static void stream_piece(JNIEnv *env, jobject activity, const std::string &text)
     env->DeleteLocalRef(piece);
 }
 
-static std::string format_prompt(const std::string &text) {
+static std::string format_prompt(const std::vector<ConversationMessage> &messages) {
+    std::vector<llama_chat_message> chat;
+    chat.reserve(messages.size());
+
+    for (const auto &message : messages) {
+        chat.push_back({
+            message.role.c_str(),
+            message.content.c_str()
+        });
+    }
+
     const char *tmpl = llama_model_chat_template(g_model, nullptr);
     if (tmpl != nullptr && tmpl[0] != '\0') {
-        llama_chat_message msg{"user", text.c_str()};
-        int32_t n = llama_chat_apply_template(tmpl, &msg, 1, true, nullptr, 0);
+        int32_t n = llama_chat_apply_template(
+            tmpl,
+            chat.data(),
+            chat.size(),
+            true,
+            nullptr,
+            0
+        );
+
         if (n > 0) {
             std::string out(static_cast<size_t>(n) + 1, '\0');
             int32_t written = llama_chat_apply_template(
-                tmpl, &msg, 1, true, out.data(), static_cast<int32_t>(out.size())
+                tmpl,
+                chat.data(),
+                chat.size(),
+                true,
+                out.data(),
+                static_cast<int32_t>(out.size())
             );
+
             if (written > 0) {
                 out.resize(static_cast<size_t>(written));
                 return out;
             }
         }
     }
-    return "User: " + text + "\nAssistant:";
+
+    std::string fallback;
+    for (const auto &message : messages) {
+        fallback += message.role;
+        fallback += ": ";
+        fallback += message.content;
+        fallback += "\n";
+    }
+    fallback += "assistant: ";
+    return fallback;
 }
 
 static bool tokenize(const llama_vocab *vocab, const std::string &text, std::vector<llama_token> &out) {
@@ -111,6 +158,7 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
 
     if (g_context) { llama_free(g_context); g_context = nullptr; }
     if (g_model) { llama_model_free(g_model); g_model = nullptr; }
+    g_conversation.clear();
 
     const auto load_start = std::chrono::steady_clock::now();
 
@@ -168,6 +216,8 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     result += std::to_string(llama_n_ctx(g_context)) + " tokens";
     result += "\nThreads: " + std::to_string(n_threads);
     result += "\nTempo de carga: " + std::to_string(load_ms) + " ms";
+    g_conversation.push_back({"system", SYSTEM_PROMPT});
+
     return env->NewStringUTF(result.c_str());
 }
 
@@ -181,7 +231,10 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
     env->ReleaseStringUTFChars(jprompt, p);
 
     const llama_vocab *vocab = llama_model_get_vocab(g_model);
-    const std::string prompt = format_prompt(user_text);
+
+    std::vector<ConversationMessage> candidate = g_conversation;
+    candidate.push_back({"user", user_text});
+    const std::string prompt = format_prompt(candidate);
 
     std::vector<llama_token> tokens;
     if (!tokenize(vocab, prompt, tokens)) {
@@ -191,7 +244,7 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
     const uint32_t n_ctx = llama_n_ctx(g_context);
     constexpr int MAX_GENERATION_TOKENS = 96;
     if (tokens.size() + MAX_GENERATION_TOKENS >= n_ctx) {
-        return env->NewStringUTF("ERRO [contexto] prompt grande demais.");
+        return env->NewStringUTF("ERRO [contexto] conversa grande demais para o contexto atual.");
     }
 
     llama_memory_clear(llama_get_memory(g_context), true);
@@ -251,6 +304,10 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
     const auto generation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - generation_start).count();
     const double tokens_per_second = generation_ms > 0 ? (generated_tokens * 1000.0 / static_cast<double>(generation_ms)) : 0.0;
     if (output.empty()) output = "(o modelo terminou sem gerar texto)";
+
+    g_conversation = std::move(candidate);
+    g_conversation.push_back({"assistant", output});
+
     output += "\n\n[perf] prefill=" + std::to_string(prompt_ms) + " ms | 1o token=" + std::to_string(first_token_ms) + " ms | geracao=" + std::to_string(generation_ms) + " ms | tokens=" + std::to_string(generated_tokens) + " | tok/s=" + std::to_string(tokens_per_second);
     return env->NewStringUTF(output.c_str());
 }
