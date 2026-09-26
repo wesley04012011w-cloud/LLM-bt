@@ -41,6 +41,13 @@ android {
         }
     }
 
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            isDebuggable = false
+        }
+    }
+
     packaging {
         jniLibs {
             useLegacyPackaging = false
