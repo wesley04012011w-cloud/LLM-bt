@@ -6,6 +6,7 @@
 #include <vector>
 #include <unistd.h>
 #include <chrono>
+#include <cstring>
 
 static llama_model *g_model = nullptr;
 static llama_context *g_context = nullptr;
@@ -78,6 +79,21 @@ static std::string result_error(const std::string &stage, int code) {
     return "ERRO [" + stage + "] llama_decode retornou " + std::to_string(code);
 }
 
+struct LlamaLogCapture {
+    std::string text;
+};
+
+static void capture_llama_log(ggml_log_level, const char *text, void *user_data) {
+    auto *capture = static_cast<LlamaLogCapture *>(user_data);
+    if (!capture || !text) return;
+
+    constexpr size_t MAX_LOG_SIZE = 12000;
+    if (capture->text.size() >= MAX_LOG_SIZE) return;
+
+    const size_t remaining = MAX_LOG_SIZE - capture->text.size();
+    capture->text.append(text, std::min(remaining, std::strlen(text)));
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_llmbt_MainActivity_stringFromNative(JNIEnv *env, jobject) {
     return env->NewStringUTF("llama.cpp nativo conectado");
@@ -100,10 +116,28 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
 
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = 0;
+
+    LlamaLogCapture log_capture;
+    ggml_log_callback previous_log_callback = nullptr;
+    void * previous_log_user_data = nullptr;
+    llama_log_get(&previous_log_callback, &previous_log_user_data);
+    llama_log_set(capture_llama_log, &log_capture);
+
     g_model = llama_model_load_from_file(path, mp);
+
+    llama_log_set(previous_log_callback, previous_log_user_data);
     env->ReleaseStringUTFChars(jpath, path);
 
-    if (!g_model) return env->NewStringUTF("Erro: não foi possível carregar o arquivo GGUF.");
+    if (!g_model) {
+        std::string error = "Erro: não foi possível carregar o arquivo GGUF.";
+        if (!log_capture.text.empty()) {
+            error += "\n\nDiagnóstico do llama.cpp:\n";
+            error += log_capture.text;
+        } else {
+            error += "\n\nO llama.cpp não retornou detalhes pelo callback de log.";
+        }
+        return env->NewStringUTF(error.c_str());
+    }
 
     const long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
     const int n_threads = static_cast<int>(std::max(2L, std::min(4L, cpu_count > 2 ? cpu_count - 2 : cpu_count)));
