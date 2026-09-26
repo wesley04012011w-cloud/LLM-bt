@@ -19,6 +19,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import java.io.File
+import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
     private lateinit var chat: LinearLayout
@@ -79,13 +80,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(8), dp(16), dp(20))
         }
 
-        addStatusMessage("Motor nativo: pronto", dark = true)
-        addStatusMessage("Nenhum modelo carregado.", dark = false)
-
         scrollView = ScrollView(this).apply {
             isFillViewport = true
             addView(chat)
         }
+
+        addStatusMessage("Motor nativo: pronto", dark = true)
+        addStatusMessage("Nenhum modelo carregado.", dark = false)
 
         input = EditText(this).apply {
             hint = "Digite uma mensagem..."
@@ -168,12 +169,18 @@ class MainActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             view.updatePadding(
                 left = bars.left,
                 top = bars.top,
                 right = bars.right,
-                bottom = bars.bottom
+                bottom = max(bars.bottom, ime.bottom)
             )
+
+            if (ime.bottom > 0) {
+                scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
+            }
+
             insets
         }
 
