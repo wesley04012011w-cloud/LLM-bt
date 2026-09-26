@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
         topP: Float,
         topK: Int
     )
+    private external fun setGenerationTokens(tokens: Int)
 
     companion object {
         private const val PICK_MODEL = 1001
@@ -56,11 +57,16 @@ class MainActivity : AppCompatActivity() {
         private const val REPEAT_PENALTY_KEY = "sampling_repeat_penalty"
         private const val TOP_P_KEY = "sampling_top_p"
         private const val TOP_K_KEY = "sampling_top_k"
+        private const val GENERATION_TOKENS_KEY = "generation_tokens"
         private const val DEFAULT_TEMPERATURE = 0.30f
         private const val DEFAULT_MIN_P = 0.15f
         private const val DEFAULT_REPEAT_PENALTY = 1.05f
         private const val DEFAULT_TOP_P = 0.95f
         private const val DEFAULT_TOP_K = 40
+        private const val DEFAULT_GENERATION_TOKENS = 384
+        private const val MIN_GENERATION_TOKENS = 64
+        private const val MAX_GENERATION_TOKENS = 1024
+        private const val GENERATION_TOKEN_STEP = 32
         private const val DEFAULT_SYSTEM_PROMPT = """Você é o LLM-BT, um assistente local.
 Seu nome é LLM-BT.
 Quando alguém perguntar seu nome, responda que seu nome é LLM-BT.
@@ -483,6 +489,39 @@ Não invente informações quando não souber a resposta."""
         val topK = addField("Top-K (0 = desativado)",
             preferences.getInt(TOP_K_KEY, DEFAULT_TOP_K).toString())
 
+        val generationLabel = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.rgb(75, 75, 75))
+            setPadding(0, dp(10), 0, dp(2))
+        }
+
+        val generationSeekBar = android.widget.SeekBar(this).apply {
+            max = (MAX_GENERATION_TOKENS - MIN_GENERATION_TOKENS) / GENERATION_TOKEN_STEP
+            progress = (
+                preferences.getInt(GENERATION_TOKENS_KEY, DEFAULT_GENERATION_TOKENS)
+                    .coerceIn(MIN_GENERATION_TOKENS, MAX_GENERATION_TOKENS)
+                    .let { (it - MIN_GENERATION_TOKENS) / GENERATION_TOKEN_STEP }
+            )
+        }
+
+        fun updateGenerationLabel() {
+            val value = MIN_GENERATION_TOKENS + generationSeekBar.progress * GENERATION_TOKEN_STEP
+            generationLabel.text = "Tokens de geração: $value"
+        }
+
+        generationSeekBar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                updateGenerationLabel()
+            }
+
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+        })
+
+        updateGenerationLabel()
+        container.addView(generationLabel, LinearLayout.LayoutParams(-1, -2))
+        container.addView(generationSeekBar, LinearLayout.LayoutParams(-1, dp(48)))
+
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Sampling")
             .setView(container)
@@ -498,6 +537,9 @@ Não invente informações quando não souber a resposta."""
                 repeatPenalty.setText(DEFAULT_REPEAT_PENALTY.toString())
                 topP.setText(DEFAULT_TOP_P.toString())
                 topK.setText(DEFAULT_TOP_K.toString())
+                generationSeekBar.progress =
+                    (DEFAULT_GENERATION_TOKENS - MIN_GENERATION_TOKENS) / GENERATION_TOKEN_STEP
+                updateGenerationLabel()
             }
 
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -506,6 +548,8 @@ Não invente informações quando não souber a resposta."""
                 val repeatValue = repeatPenalty.text.toString().toFloatOrNull()
                 val topPValue = topP.text.toString().toFloatOrNull()
                 val topKValue = topK.text.toString().toIntOrNull()
+                val generationValue =
+                    MIN_GENERATION_TOKENS + generationSeekBar.progress * GENERATION_TOKEN_STEP
 
                 if (tempValue == null || tempValue < 0f || tempValue > 2f) {
                     temperature.error = "Use um valor entre 0 e 2."
@@ -534,14 +578,16 @@ Não invente informações quando não souber a resposta."""
                     .putFloat(REPEAT_PENALTY_KEY, repeatValue)
                     .putFloat(TOP_P_KEY, topPValue)
                     .putInt(TOP_K_KEY, topKValue)
+                    .putInt(GENERATION_TOKENS_KEY, generationValue)
                     .apply()
 
                 if (nativeLoaded) {
                     setSamplingParams(tempValue, minPValue, repeatValue, topPValue, topKValue)
+                    setGenerationTokens(generationValue)
                 }
 
-                addStatusMessage("Sampling atualizado.", dark = false)
-                AppLogger.write("Sampling updated: temp=$tempValue min_p=$minPValue repeat=$repeatValue top_p=$topPValue top_k=$topKValue")
+                addStatusMessage("Sampling atualizado. Tokens de geração: $generationValue.", dark = false)
+                AppLogger.write("Sampling updated: temp=$tempValue min_p=$minPValue repeat=$repeatValue top_p=$topPValue top_k=$topKValue generation_tokens=$generationValue")
                 dialog.dismiss()
             }
         }
@@ -610,6 +656,10 @@ Não invente informações quando não souber a resposta."""
                         preferences.getFloat(REPEAT_PENALTY_KEY, DEFAULT_REPEAT_PENALTY),
                         preferences.getFloat(TOP_P_KEY, DEFAULT_TOP_P),
                         preferences.getInt(TOP_K_KEY, DEFAULT_TOP_K)
+                    )
+                    setGenerationTokens(
+                        preferences.getInt(GENERATION_TOKENS_KEY, DEFAULT_GENERATION_TOKENS)
+                            .coerceIn(MIN_GENERATION_TOKENS, MAX_GENERATION_TOKENS)
                     )
                     AppLogger.write("Native library loaded successfully")
                 }
