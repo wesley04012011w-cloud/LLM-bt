@@ -84,10 +84,7 @@ class MainActivity : AppCompatActivity() {
 
         scrollView = ScrollView(this).apply {
             isFillViewport = true
-            addView(
-                chat,
-                ScrollView.LayoutParams(-1, -2)
-            )
+            addView(chat)
         }
 
         input = EditText(this).apply {
