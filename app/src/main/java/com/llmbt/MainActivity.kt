@@ -1,9 +1,14 @@
 package com.llmbt
 
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
+import android.view.Gravity
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -16,12 +21,15 @@ import androidx.core.view.updatePadding
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var chat: TextView
+    private lateinit var chat: LinearLayout
+    private lateinit var scrollView: ScrollView
     private lateinit var input: EditText
+    private lateinit var sendButton: Button
     private lateinit var root: LinearLayout
     private var nativeLoaded = false
     private var modelLoaded = false
     @Volatile private var streamingResponseStarted = false
+    private var currentAssistantMessage: TextView? = null
 
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
@@ -37,61 +45,130 @@ class MainActivity : AppCompatActivity() {
         AppLogger.write("MainActivity.onCreate started")
         AppLogger.write("Native engine will be loaded on demand")
 
-        chat = TextView(this).apply {
-            text = "LLM BT\n\nMotor nativo: pronto\nNenhum modelo carregado."
-            textSize = 16f
-            setPadding(24, 24, 24, 24)
+        val topBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(8))
+        }
+
+        val title = TextView(this).apply {
+            text = "LLM BT"
+            textSize = 20f
+            setTextColor(Color.rgb(32, 33, 36))
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }
+
+        val importButton = Button(this).apply {
+            text = "Carregar modelo"
+            textSize = 13f
+            isAllCaps = false
+            setOnClickListener { openModelPicker() }
+        }
+
+        topBar.addView(
+            title,
+            LinearLayout.LayoutParams(0, dp(48), 1f)
+        )
+        topBar.addView(
+            importButton,
+            LinearLayout.LayoutParams(dp(150), dp(48))
+        )
+
+        chat = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(20))
+        }
+
+        addStatusMessage("Motor nativo: pronto", dark = true)
+        addStatusMessage("Nenhum modelo carregado.", dark = false)
+
+        scrollView = ScrollView(this).apply {
+            isFillViewport = true
+            addView(
+                chat,
+                ScrollView.LayoutParams(-1, -2)
+            )
         }
 
         input = EditText(this).apply {
             hint = "Digite uma mensagem..."
-            isSingleLine = false
+            textSize = 16f
+            setTextColor(Color.rgb(32, 33, 36))
+            setHintTextColor(Color.rgb(125, 125, 125))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            imeOptions = EditorInfo.IME_ACTION_SEND
             minLines = 1
             maxLines = 4
+            setPadding(dp(16), dp(10), dp(8), dp(10))
+            background = roundedBackground(Color.rgb(245, 245, 245), 24f)
         }
 
-        val importButton = Button(this).apply {
-            text = "Importar GGUF"
-            setOnClickListener {
-                openModelPicker()
+        sendButton = Button(this).apply {
+            text = "➤"
+            textSize = 22f
+            isAllCaps = false
+            setTextColor(Color.rgb(255, 255, 255))
+            background = roundedBackground(Color.rgb(70, 70, 70), 22f)
+            setPadding(0, 0, 0, 0)
+            contentDescription = "Enviar mensagem"
+            setOnClickListener { sendMessage() }
+        }
+
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                sendMessage()
+                true
+            } else {
+                false
             }
         }
 
-        val send = Button(this).apply {
-            text = "Enviar"
-            setOnClickListener { sendMessage() }
+        val inputBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            setPadding(dp(12), dp(8), dp(12), dp(10))
+            background = roundedBackground(Color.rgb(245, 245, 245), 28f)
+
+            addView(
+                input,
+                LinearLayout.LayoutParams(0, -2, 1f).apply {
+                    marginEnd = dp(8)
+                }
+            )
+
+            addView(
+                sendButton,
+                LinearLayout.LayoutParams(dp(44), dp(44))
+            )
         }
 
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(16, 8, 16, 16)
-
-            val buttons = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(importButton, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(send, LinearLayout.LayoutParams(0, -2, 1f))
-            }
-
-            addView(input, LinearLayout.LayoutParams(-1, -2))
-            addView(buttons, LinearLayout.LayoutParams(-1, -2))
+            setPadding(dp(12), dp(4), dp(12), dp(12))
+            addView(
+                inputBar,
+                LinearLayout.LayoutParams(-1, -2)
+            )
         }
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(Color.WHITE)
 
             addView(
-                ScrollView(this@MainActivity).apply {
-                    addView(chat)
-                },
+                topBar,
+                LinearLayout.LayoutParams(-1, -2)
+            )
+            addView(
+                scrollView,
                 LinearLayout.LayoutParams(-1, 0, 1f)
             )
-
-            addView(controls)
+            addView(
+                controls,
+                LinearLayout.LayoutParams(-1, -2)
+            )
         }
 
-        // Android 15/16 uses edge-to-edge by default. Apply system-bar insets
-        // so the app content stays visually between the status and navigation bars.
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.updatePadding(
@@ -114,14 +191,17 @@ class MainActivity : AppCompatActivity() {
         if (message.isEmpty()) return
 
         if (!modelLoaded) {
-            chat.append("\n\nVocê: $message\nLLM: importe um modelo GGUF primeiro.")
+            addUserMessage(message)
+            addStatusMessage("Importe um modelo GGUF primeiro.", dark = false)
             input.text.clear()
             return
         }
 
         input.isEnabled = false
+        sendButton.isEnabled = false
         streamingResponseStarted = false
-        chat.append("\n\nVocê: $message\nLLM: gerando...")
+        currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
+        addUserMessage(message)
         input.text.clear()
         AppLogger.write("Generation requested")
 
@@ -131,15 +211,28 @@ class MainActivity : AppCompatActivity() {
                 AppLogger.write("Generation result: " + result.replace("\n", " | "))
                 runOnUiThread {
                     if (!streamingResponseStarted) {
-                        chat.text = chat.text.toString().replace("LLM: gerando...", "LLM: $result")
+                        currentAssistantMessage?.apply {
+                            text = "LLM: $result"
+                            setTextColor(Color.rgb(32, 33, 36))
+                        }
                     }
                     input.isEnabled = true
+                    sendButton.isEnabled = true
+                    scrollToBottom()
                 }
             } catch (throwable: Throwable) {
                 AppLogger.exception("TEXT GENERATION FAILED", throwable)
                 runOnUiThread {
-                    chat.append("\nERRO: " + (throwable.message ?: throwable.javaClass.simpleName))
+                    currentAssistantMessage?.apply {
+                        text = "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName)
+                        setTextColor(Color.rgb(170, 40, 40))
+                    } ?: addStatusMessage(
+                        "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
+                        dark = false
+                    )
                     input.isEnabled = true
+                    sendButton.isEnabled = true
+                    scrollToBottom()
                 }
             }
         }.start()
@@ -147,12 +240,84 @@ class MainActivity : AppCompatActivity() {
 
     fun appendGeneratedToken(piece: String) {
         runOnUiThread {
-            if (!streamingResponseStarted) {
-                chat.text = chat.text.toString().replace("LLM: gerando...", "LLM:")
-                streamingResponseStarted = true
+            currentAssistantMessage?.let { messageView ->
+                if (!streamingResponseStarted) {
+                    messageView.text = "LLM:"
+                    messageView.setTextColor(Color.rgb(32, 33, 36))
+                    streamingResponseStarted = true
+                }
+                messageView.append(piece)
+                scrollToBottom()
             }
-            chat.append(piece)
         }
+    }
+
+    private fun addUserMessage(message: String) {
+        val bubble = TextView(this).apply {
+            text = "Você\n$message"
+            textSize = 16f
+            setTextColor(Color.rgb(35, 35, 35))
+            setPadding(dp(16), dp(11), dp(16), dp(11))
+            background = roundedBackground(Color.rgb(232, 232, 232), 18f)
+        }
+
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.END
+            topMargin = dp(8)
+            bottomMargin = dp(2)
+            marginStart = dp(48)
+        }
+
+        chat.addView(bubble, params)
+        scrollToBottom()
+    }
+
+    private fun addAssistantMessage(message: String, loading: Boolean): TextView {
+        val view = TextView(this).apply {
+            text = message
+            textSize = 16f
+            setTextColor(
+                if (loading) Color.rgb(125, 125, 125)
+                else Color.rgb(32, 33, 36)
+            )
+            setPadding(dp(4), dp(8), dp(4), dp(8))
+        }
+
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            topMargin = dp(6)
+            bottomMargin = dp(2)
+        }
+
+        chat.addView(view, params)
+        scrollToBottom()
+        return view
+    }
+
+    private fun addStatusMessage(message: String, dark: Boolean) {
+        val view = TextView(this).apply {
+            text = message
+            textSize = if (dark) 15f else 14f
+            setTextColor(
+                if (dark) Color.rgb(75, 75, 75)
+                else Color.rgb(145, 145, 145)
+            )
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+
+        chat.addView(
+            view,
+            LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = dp(2)
+                bottomMargin = dp(2)
+            }
+        )
+        scrollToBottom()
     }
 
     private fun openModelPicker() {
@@ -177,7 +342,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun importAndLoadModel(uri: Uri) {
-        chat.append("\n\nImportando modelo GGUF...\nCopiando arquivo para o armazenamento privado do app...")
+        addStatusMessage("Importando modelo GGUF...", dark = false)
+        addStatusMessage("Copiando arquivo para o armazenamento privado do app...", dark = false)
         AppLogger.write("GGUF selected: $uri")
 
         Thread {
@@ -187,6 +353,10 @@ class MainActivity : AppCompatActivity() {
                 val displayName = queryDisplayName(uri)
                 val safeName = (displayName ?: "model.gguf")
                     .replace(Regex("[^A-Za-z0-9._-]"), "_")
+                require(safeName.lowercase().endsWith(".gguf")) {
+                    "Selecione um arquivo .gguf."
+                }
+
                 val modelFile = File(modelsDir, safeName)
 
                 contentResolver.openInputStream(uri).use { input ->
@@ -197,7 +367,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
-                    chat.append("\nArquivo copiado. Inicializando llama.cpp...")
+                    addStatusMessage("Arquivo copiado. Inicializando llama.cpp...", dark = false)
                 }
 
                 if (!nativeLoaded) {
@@ -208,7 +378,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
-                    chat.append("\nCarregando modelo na memória...")
+                    addStatusMessage("Carregando modelo na memória...", dark = false)
                 }
 
                 AppLogger.write("Loading GGUF: " + modelFile.absolutePath)
@@ -217,12 +387,15 @@ class MainActivity : AppCompatActivity() {
                 modelLoaded = result.startsWith("Modelo carregado!")
 
                 runOnUiThread {
-                    chat.append("\n\n$result")
+                    addStatusMessage(result, dark = modelLoaded)
                 }
             } catch (throwable: Throwable) {
                 AppLogger.exception("GGUF IMPORT/LOAD FAILED", throwable)
                 runOnUiThread {
-                    chat.append("\n\nERRO:\n" + (throwable.message ?: throwable.javaClass.simpleName))
+                    addStatusMessage(
+                        "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
+                        dark = false
+                    )
                 }
             }
         }.start()
@@ -243,4 +416,26 @@ class MainActivity : AppCompatActivity() {
         }
         return null
     }
+
+    private fun roundedBackground(color: Int, radiusDp: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(color)
+            cornerRadius = dp(radiusDp)
+        }
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).roundToInt()
+
+    private fun dp(value: Float): Float =
+        value * resources.displayMetrics.density
+
+    private fun scrollToBottom() {
+        scrollView.post {
+            scrollView.fullScroll(View.FOCUS_DOWN)
+        }
+    }
+
+    private fun Float.roundToInt(): Int = kotlin.math.round(this).toInt()
 }
