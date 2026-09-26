@@ -368,7 +368,7 @@ Não invente informações quando não souber a resposta."""
             maxLines = 18
             setPadding(dp(12), dp(12), dp(12), dp(12))
             background = roundedBackground(Color.rgb(245, 245, 245), 12f)
-            selectAllOnFocus = false
+            setSelectAllOnFocus(false)
         }
 
         val container = LinearLayout(this).apply {
