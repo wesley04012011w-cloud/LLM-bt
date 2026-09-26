@@ -96,6 +96,8 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     if (g_context) { llama_free(g_context); g_context = nullptr; }
     if (g_model) { llama_model_free(g_model); g_model = nullptr; }
 
+    const auto load_start = std::chrono::steady_clock::now();
+
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = 0;
     g_model = llama_model_load_from_file(path, mp);
@@ -124,11 +126,14 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
     llama_model_desc(g_model, desc, sizeof(desc));
     uint64_t size_mb = llama_model_size(g_model) / (1024ULL * 1024ULL);
 
+    const auto load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - load_start).count();
+
     std::string result = "Modelo carregado!\nArquitetura: ";
     result += desc[0] ? desc : "desconhecida";
     result += "\nTamanho: " + std::to_string(size_mb) + " MB\nContexto: ";
     result += std::to_string(llama_n_ctx(g_context)) + " tokens";
     result += "\nThreads: " + std::to_string(n_threads);
+    result += "\nTempo de carga: " + std::to_string(load_ms) + " ms";
     return env->NewStringUTF(result.c_str());
 }
 
@@ -160,7 +165,9 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
     // Use the same single-sequence batch helper as the current llama.cpp examples.
     llama_batch batch = llama_batch_get_one(tokens.data(), static_cast<int32_t>(tokens.size()));
 
+    const auto prompt_start = std::chrono::steady_clock::now();
     const int decode_prompt = llama_decode(g_context, batch);
+    const auto prompt_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - prompt_start).count();
     if (decode_prompt != 0) {
         return env->NewStringUTF(result_error("prompt", decode_prompt).c_str());
     }
@@ -173,6 +180,9 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
 
     std::string output;
     output.reserve(1024);
+    int generated_tokens = 0;
+    long long first_token_ms = -1;
+    const auto generation_start = std::chrono::steady_clock::now();
 
     for (int i = 0; i < MAX_GENERATION_TOKENS; ++i) {
         const llama_token token = llama_sampler_sample(sampler, g_context, -1);
@@ -184,6 +194,10 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
         const std::string token_piece = piece(vocab, token);
         if (!token_piece.empty()) {
             output += token_piece;
+            ++generated_tokens;
+            if (first_token_ms < 0) {
+                first_token_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - generation_start).count();
+            }
             stream_piece(env, activity, token_piece);
         }
 
@@ -200,6 +214,9 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
 
     llama_sampler_free(sampler);
 
+    const auto generation_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - generation_start).count();
+    const double tokens_per_second = generation_ms > 0 ? (generated_tokens * 1000.0 / static_cast<double>(generation_ms)) : 0.0;
     if (output.empty()) output = "(o modelo terminou sem gerar texto)";
+    output += "\n\n[perf] prefill=" + std::to_string(prompt_ms) + " ms | 1o token=" + std::to_string(first_token_ms) + " ms | geracao=" + std::to_string(generation_ms) + " ms | tokens=" + std::to_string(generated_tokens) + " | tok/s=" + std::to_string(tokens_per_second);
     return env->NewStringUTF(output.c_str());
 }
