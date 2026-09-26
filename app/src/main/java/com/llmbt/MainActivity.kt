@@ -200,8 +200,8 @@ class MainActivity : AppCompatActivity() {
         input.isEnabled = false
         sendButton.isEnabled = false
         streamingResponseStarted = false
-        currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
         addUserMessage(message)
+        currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
         input.text.clear()
         AppLogger.write("Generation requested")
 
