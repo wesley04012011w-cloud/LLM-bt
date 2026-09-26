@@ -51,7 +51,10 @@ static void stream_piece(JNIEnv *env, jobject activity, const std::string &text)
     env->DeleteLocalRef(piece);
 }
 
-static std::string format_prompt(const std::vector<ConversationMessage> &messages) {
+static std::string format_prompt(
+    const std::vector<ConversationMessage> &messages,
+    bool add_assistant_header
+) {
     std::vector<llama_chat_message> chat;
     chat.reserve(messages.size());
 
@@ -68,7 +71,7 @@ static std::string format_prompt(const std::vector<ConversationMessage> &message
             tmpl,
             chat.data(),
             chat.size(),
-            true,
+            add_assistant_header,
             nullptr,
             0
         );
@@ -79,7 +82,7 @@ static std::string format_prompt(const std::vector<ConversationMessage> &message
                 tmpl,
                 chat.data(),
                 chat.size(),
-                true,
+                add_assistant_header,
                 out.data(),
                 static_cast<int32_t>(out.size())
             );
@@ -98,16 +101,23 @@ static std::string format_prompt(const std::vector<ConversationMessage> &message
         fallback += message.content;
         fallback += "\n";
     }
-    fallback += "assistant: ";
+    if (add_assistant_header) {
+        fallback += "assistant: ";
+    }
     return fallback;
 }
 
-static bool tokenize(const llama_vocab *vocab, const std::string &text, std::vector<llama_token> &out) {
+static bool tokenize(
+    const llama_vocab *vocab,
+    const std::string &text,
+    std::vector<llama_token> &out,
+    bool add_bos
+) {
     int32_t cap = std::max<int32_t>(256, static_cast<int32_t>(text.size() * 2 + 32));
     out.resize(static_cast<size_t>(cap));
     int32_t n = llama_tokenize(
         vocab, text.c_str(), static_cast<int32_t>(text.size()),
-        out.data(), cap, true, true
+        out.data(), cap, add_bos, true
     );
     if (n < 0) {
         cap = -n;
@@ -270,7 +280,7 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
     const std::string prompt = format_prompt(candidate);
 
     std::vector<llama_token> tokens;
-    if (!tokenize(vocab, prompt, tokens)) {
+    if (!tokenize(vocab, prompt, tokens, false)) {
         return env->NewStringUTF("ERRO [tokenização] nenhum token foi produzido.");
     }
 
@@ -402,16 +412,58 @@ Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring 
         output = "(o modelo terminou sem gerar texto)";
     }
 
-    g_cached_tokens = tokens;
-    g_cached_tokens.insert(
-        g_cached_tokens.end(),
-        generated_token_ids.begin(),
-        generated_token_ids.end()
-    );
-    g_cache_valid = true;
-
     g_conversation = std::move(candidate);
     g_conversation.push_back({"assistant", output});
+
+    // Cache the complete formatted conversation, including the assistant's
+    // closing control tokens. The generated loop stops before EOG, so the
+    // context still lacks the final <|im_end|>/newline sequence. Decode only
+    // that small suffix so the KV cache matches the next turn exactly.
+    bool history_cache_ready = false;
+    {
+        const std::string history_prompt = format_prompt(g_conversation, false);
+        std::vector<llama_token> history_tokens;
+        if (tokenize(vocab, history_prompt, history_tokens, false)) {
+            std::vector<llama_token> generated_prefix = tokens;
+            generated_prefix.insert(
+                generated_prefix.end(),
+                generated_token_ids.begin(),
+                generated_token_ids.end()
+            );
+
+            if (history_tokens.size() >= generated_prefix.size() &&
+                std::equal(
+                    generated_prefix.begin(),
+                    generated_prefix.end(),
+                    history_tokens.begin()
+                )) {
+                const size_t suffix_count = history_tokens.size() - generated_prefix.size();
+
+                if (suffix_count > 0) {
+                    llama_batch suffix_batch = llama_batch_get_one(
+                        const_cast<llama_token *>(history_tokens.data() + generated_prefix.size()),
+                        static_cast<int32_t>(suffix_count)
+                    );
+                    const int decode_suffix = llama_decode(g_context, suffix_batch);
+                    if (decode_suffix == 0) {
+                        history_cache_ready = true;
+                    }
+                } else {
+                    history_cache_ready = true;
+                }
+
+                if (history_cache_ready) {
+                    g_cached_tokens = std::move(history_tokens);
+                    g_cache_valid = true;
+                }
+            }
+        }
+    }
+
+    if (!history_cache_ready) {
+        g_cached_tokens.clear();
+        g_cache_valid = false;
+    }
 
     output += "\n\n[perf] cache=" + std::string(cache_hit ? "HIT" : "MISS") +
               " | reutilizados=" + std::to_string(reused_tokens) +
