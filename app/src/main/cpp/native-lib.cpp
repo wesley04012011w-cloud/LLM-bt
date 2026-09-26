@@ -103,7 +103,6 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
 
     if (!g_model) return env->NewStringUTF("Erro: não foi possível carregar o arquivo GGUF.");
 
-    llama_context_params cp = llama_context_default_params();
     const long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
     const int n_threads = static_cast<int>(std::max(2L, std::min(4L, cpu_count > 2 ? cpu_count - 2 : cpu_count)));
 
@@ -134,7 +133,7 @@ Java_com_llmbt_MainActivity_loadModel(JNIEnv *env, jobject, jstring jpath) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject, jstring jprompt) {
+Java_com_llmbt_MainActivity_generateText(JNIEnv *env, jobject activity, jstring jprompt) {
     if (!g_model || !g_context) return env->NewStringUTF("ERRO [estado] nenhum modelo está carregado.");
 
     const char *p = env->GetStringUTFChars(jprompt, nullptr);
