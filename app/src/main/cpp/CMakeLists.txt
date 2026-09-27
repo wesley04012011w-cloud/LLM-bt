@@ -41,6 +41,12 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(llama)
 
+# ggml-vulkan is created inside llama.cpp; attach the host SPIR-V include
+# directory directly to that target for Android cross-compilation.
+if(TARGET ggml-vulkan AND DEFINED ENV{SPIRV_HEADERS_INCLUDE_DIR})
+    target_include_directories(ggml-vulkan PRIVATE "$ENV{SPIRV_HEADERS_INCLUDE_DIR}")
+endif()
+
 add_library(llmbt SHARED native-lib.cpp)
 
 target_link_libraries(llmbt PRIVATE llama)
