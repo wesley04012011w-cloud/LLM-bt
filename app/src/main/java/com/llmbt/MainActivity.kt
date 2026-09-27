@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     )
     private external fun setGenerationTokens(tokens: Int)
     private external fun setThreadConfig(generationThreads: Int, batchThreads: Int)
+    private external fun setAccelerationConfig(mode: Int, gpuLayers: Int)
     private external fun resetConversation()
 
     companion object {
@@ -71,6 +72,15 @@ class MainActivity : AppCompatActivity() {
         private const val GENERATION_TOKENS_KEY = "generation_tokens"
         private const val GENERATION_THREADS_KEY = "generation_threads"
         private const val BATCH_THREADS_KEY = "batch_threads"
+        private const val ACCELERATION_MODE_KEY = "acceleration_mode"
+        private const val GPU_LAYERS_KEY = "gpu_layers"
+        private const val ACCELERATION_CPU = 0
+        private const val ACCELERATION_HYBRID_MANUAL = 1
+        private const val ACCELERATION_HYBRID_AUTO = 2
+        private const val DEFAULT_ACCELERATION_MODE = ACCELERATION_CPU
+        private const val DEFAULT_GPU_LAYERS = 4
+        private const val MIN_GPU_LAYERS = 1
+        private const val MAX_GPU_LAYERS = 32
         private const val DEFAULT_GENERATION_THREADS = 7
         private const val DEFAULT_BATCH_THREADS = 7
         private const val MIN_THREADS = 1
@@ -172,6 +182,19 @@ Não invente informações quando não souber a resposta."""
         })
         settingsRow.addView(threadsButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3) })
 
+        val accelerationButton = Button(this).apply {
+            text = "Aceleração"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener { showAccelerationDialog() }
+        }
+
+        val accelerationRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(accelerationButton, LinearLayout.LayoutParams(-1, dp(44)))
+        }
+
         analyzerButton = Button(this).apply {
             text = "Analisador"
             textSize = 12f
@@ -210,6 +233,7 @@ Não invente informações quando não souber a resposta."""
         topBar.addView(titleRow, LinearLayout.LayoutParams(-1, dp(48)))
         topBar.addView(generationStatsText, LinearLayout.LayoutParams(-1, dp(24)))
         topBar.addView(settingsRow, LinearLayout.LayoutParams(-1, dp(44)))
+        topBar.addView(accelerationRow, LinearLayout.LayoutParams(-1, dp(44)))
         topBar.addView(modelActionsRow, LinearLayout.LayoutParams(-1, dp(44)))
         topBar.addView(analyzerRow, LinearLayout.LayoutParams(-1, dp(44)))
 
@@ -672,6 +696,147 @@ Não invente informações quando não souber a resposta."""
     }
 
 
+    private fun showAccelerationDialog() {
+        val mode = preferences.getInt(
+            ACCELERATION_MODE_KEY,
+            DEFAULT_ACCELERATION_MODE
+        ).coerceIn(ACCELERATION_CPU, ACCELERATION_HYBRID_AUTO)
+        val gpuLayers = preferences.getInt(
+            GPU_LAYERS_KEY,
+            DEFAULT_GPU_LAYERS
+        ).coerceIn(MIN_GPU_LAYERS, MAX_GPU_LAYERS)
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+        }
+
+        val modeLabel = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.rgb(55, 55, 55))
+            setPadding(0, dp(4), 0, dp(8))
+        }
+
+        val radioGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.VERTICAL
+        }
+
+        val cpuRadio = android.widget.RadioButton(this).apply {
+            text = "CPU"
+            id = View.generateViewId()
+        }
+        val manualRadio = android.widget.RadioButton(this).apply {
+            text = "Híbrido manual (CPU + Vulkan)"
+            id = View.generateViewId()
+        }
+        val autoRadio = android.widget.RadioButton(this).apply {
+            text = "Híbrido automático"
+            id = View.generateViewId()
+        }
+
+        radioGroup.addView(cpuRadio)
+        radioGroup.addView(manualRadio)
+        radioGroup.addView(autoRadio)
+
+        when (mode) {
+            ACCELERATION_HYBRID_MANUAL -> manualRadio.isChecked = true
+            ACCELERATION_HYBRID_AUTO -> autoRadio.isChecked = true
+            else -> cpuRadio.isChecked = true
+        }
+
+        val layersLabel = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.rgb(75, 75, 75))
+            setPadding(0, dp(10), 0, dp(2))
+        }
+
+        val layersSeekBar = android.widget.SeekBar(this).apply {
+            max = MAX_GPU_LAYERS - MIN_GPU_LAYERS
+            progress = gpuLayers - MIN_GPU_LAYERS
+            isEnabled = mode == ACCELERATION_HYBRID_MANUAL
+        }
+
+        fun updateLabels() {
+            val selected = when {
+                cpuRadio.isChecked -> ACCELERATION_CPU
+                manualRadio.isChecked -> ACCELERATION_HYBRID_MANUAL
+                else -> ACCELERATION_HYBRID_AUTO
+            }
+            modeLabel.text = when (selected) {
+                ACCELERATION_CPU -> "CPU: sem offload para GPU."
+                ACCELERATION_HYBRID_MANUAL ->
+                    "Híbrido manual: você escolhe quantas camadas vão para a Mali/Vulkan."
+                else ->
+                    "Híbrido automático: usa uma heurística conservadora de 25% das camadas do modelo."
+            }
+            layersLabel.text = "GPU layers: ${MIN_GPU_LAYERS + layersSeekBar.progress}"
+            layersSeekBar.isEnabled = selected == ACCELERATION_HYBRID_MANUAL
+        }
+
+        radioGroup.setOnCheckedChangeListener { _, _ -> updateLabels() }
+        layersSeekBar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(
+                seekBar: android.widget.SeekBar?,
+                progress: Int,
+                fromUser: Boolean
+            ) {
+                updateLabels()
+            }
+
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+        })
+
+        updateLabels()
+        container.addView(modeLabel, LinearLayout.LayoutParams(-1, -2))
+        container.addView(radioGroup, LinearLayout.LayoutParams(-1, -2))
+        container.addView(layersLabel, LinearLayout.LayoutParams(-1, -2))
+        container.addView(layersSeekBar, LinearLayout.LayoutParams(-1, dp(48)))
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Aceleração")
+            .setView(container)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Salvar", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selected = when {
+                    cpuRadio.isChecked -> ACCELERATION_CPU
+                    manualRadio.isChecked -> ACCELERATION_HYBRID_MANUAL
+                    else -> ACCELERATION_HYBRID_AUTO
+                }
+                val selectedLayers = MIN_GPU_LAYERS + layersSeekBar.progress
+
+                preferences.edit()
+                    .putInt(ACCELERATION_MODE_KEY, selected)
+                    .putInt(GPU_LAYERS_KEY, selectedLayers)
+                    .apply()
+
+                if (nativeLoaded) {
+                    setAccelerationConfig(selected, selectedLayers)
+                }
+
+                val label = when (selected) {
+                    ACCELERATION_CPU -> "CPU"
+                    ACCELERATION_HYBRID_MANUAL -> "Híbrido manual / Vulkan (${selectedLayers} layers)"
+                    else -> "Híbrido automático / Vulkan"
+                }
+                addStatusMessage(
+                    "Aceleração salva: $label. Recarregue o modelo para aplicar.",
+                    dark = false
+                )
+                AppLogger.write(
+                    "Acceleration updated: mode=$selected gpu_layers=$selectedLayers"
+                )
+                dialog.dismiss()
+            }
+        }
+
+        dialog.show()
+    }
+
     private fun showThreadsDialog() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1000,6 +1165,16 @@ Não invente informações quando não souber a resposta."""
                 ).coerceIn(MIN_THREADS, MAX_THREADS)
                 setThreadConfig(generationThreads, batchThreads)
 
+                val accelerationMode = preferences.getInt(
+                    ACCELERATION_MODE_KEY,
+                    DEFAULT_ACCELERATION_MODE
+                ).coerceIn(ACCELERATION_CPU, ACCELERATION_HYBRID_AUTO)
+                val gpuLayers = preferences.getInt(
+                    GPU_LAYERS_KEY,
+                    DEFAULT_GPU_LAYERS
+                ).coerceIn(MIN_GPU_LAYERS, MAX_GPU_LAYERS)
+                setAccelerationConfig(accelerationMode, gpuLayers)
+
                 val result = loadModel(modelFile.absolutePath)
                 val loaded = result.startsWith("Modelo carregado!")
                 modelLoaded = loaded
@@ -1166,6 +1341,16 @@ Não invente informações quando não souber a resposta."""
                     DEFAULT_BATCH_THREADS
                 ).coerceIn(MIN_THREADS, MAX_THREADS)
                 setThreadConfig(generationThreads, batchThreads)
+
+                val accelerationMode = preferences.getInt(
+                    ACCELERATION_MODE_KEY,
+                    DEFAULT_ACCELERATION_MODE
+                ).coerceIn(ACCELERATION_CPU, ACCELERATION_HYBRID_AUTO)
+                val gpuLayers = preferences.getInt(
+                    GPU_LAYERS_KEY,
+                    DEFAULT_GPU_LAYERS
+                ).coerceIn(MIN_GPU_LAYERS, MAX_GPU_LAYERS)
+                setAccelerationConfig(accelerationMode, gpuLayers)
 
                 runOnUiThread {
                     addStatusMessage("Carregando modelo na memória...", dark = false)
