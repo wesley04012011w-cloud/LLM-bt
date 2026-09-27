@@ -29,31 +29,6 @@ jobs:
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
 
-      - name: Install Vulkan build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y glslc spirv-headers libvulkan-dev
-          glslc --version
-
-          SPIRV_HEADERS_CMAKE_DIR="$(dirname "$(dpkg -L spirv-headers | grep '/SPIRV-HeadersConfig.cmake$' | head -n 1)")"
-          echo "SPIRV_HEADERS_CMAKE_DIR=$SPIRV_HEADERS_CMAKE_DIR"
-          echo "CMAKE_PREFIX_PATH=$SPIRV_HEADERS_CMAKE_DIR:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
-
-          git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/Vulkan-Headers"
-          test -f "$RUNNER_TEMP/Vulkan-Headers/include/vulkan/vulkan.hpp"
-          echo "VULKAN_HEADERS_INCLUDE_DIR=$RUNNER_TEMP/Vulkan-Headers/include" >> "$GITHUB_ENV"
-
-          SPIRV_HEADERS_INCLUDE_DIR="$(dpkg -L spirv-headers | grep '/spirv/unified1/spirv.hpp$' | head -n 1 | sed 's#/spirv/unified1/spirv.hpp$##')"
-          test -f "$SPIRV_HEADERS_INCLUDE_DIR/spirv/unified1/spirv.hpp"
-          echo "SPIRV_HEADERS_INCLUDE_DIR=$SPIRV_HEADERS_INCLUDE_DIR"
-          echo "SPIRV_HEADERS_INCLUDE_DIR=$SPIRV_HEADERS_INCLUDE_DIR" >> "$GITHUB_ENV"
-
-          # ggml-vulkan includes SPIR-V C++ headers with <spirv/...>.
-          # Put them under the already-exported Vulkan-Headers include root so
-          # every Vulkan target sees both Khronos header trees.
-          cp -a "$SPIRV_HEADERS_INCLUDE_DIR/spirv" "$RUNNER_TEMP/Vulkan-Headers/include/"
-          test -f "$RUNNER_TEMP/Vulkan-Headers/include/spirv/unified1/spirv.hpp"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
