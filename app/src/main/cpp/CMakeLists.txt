@@ -6,6 +6,12 @@ include(FetchContent)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
 set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+
+# Android NDK cross-compilation restricts CMake package lookup to the target
+# sysroot. Expose the host-installed SPIRV-Headers package to ggml-vulkan.
+if(EXISTS "/usr/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake")
+    set(SPIRV-Headers_DIR "/usr/share/cmake/SPIRV-Headers" CACHE PATH "" FORCE)
+endif()
 set(GGML_CPU_ALL_VARIANTS OFF CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
