@@ -42,6 +42,44 @@ jobs:
           test -f "$RUNNER_TEMP/Vulkan-Headers/include/vulkan/vulkan.hpp"
           echo "VULKAN_HEADERS_INCLUDE_DIR=$RUNNER_TEMP/Vulkan-Headers/include" >> "$GITHUB_ENV"
 
+          SPIRV_HEADERS_INCLUDE_DIR="$(dpkg -L spirv-headers | grep '/spirv/unified1/spirv.hpp
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build release APK
+        run: gradle assembleRelease --no-daemon
+
+      - name: Verify unsigned APK
+        run: |
+          ls -lah app/build/outputs/apk/release/
+          test -f app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Generate test signing key
+        env:
+          SIGNING_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-LLM-BT-test
+        run: |
+          bash scripts/generate-test-signing-key.sh
+
+      - name: Sign release APK
+        env:
+          SIGNING_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-LLM-BT-test
+        run: |
+          bash scripts/sign-release-apk.sh
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLM-BT-release-signed
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+ | head -n 1 | sed 's#/spirv/unified1/spirv.hpp$##')"
+          test -f "$SPIRV_HEADERS_INCLUDE_DIR/spirv/unified1/spirv.hpp"
+          echo "SPIRV_HEADERS_INCLUDE_DIR=$SPIRV_HEADERS_INCLUDE_DIR"
+          echo "SPIRV_HEADERS_INCLUDE_DIR=$SPIRV_HEADERS_INCLUDE_DIR" >> "$GITHUB_ENV"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
