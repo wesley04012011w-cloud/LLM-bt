@@ -368,6 +368,10 @@ Não invente informações quando não souber a resposta."""
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
+                    samplingButton.isEnabled = true
+                    threadsButton.isEnabled = true
+                    reloadModelsButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
                     scrollToBottom()
                 }
             }
@@ -615,10 +619,6 @@ Não invente informações quando não souber a resposta."""
                     .putInt(GENERATION_THREADS_KEY, generation)
                     .putInt(BATCH_THREADS_KEY, batch)
                     .apply()
-
-                if (nativeLoaded) {
-                    setThreadConfig(generation, batch)
-                }
 
                 generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generation"
                 addStatusMessage(
