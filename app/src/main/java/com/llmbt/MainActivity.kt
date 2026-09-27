@@ -403,8 +403,14 @@ Não invente informações quando não souber a resposta."""
         val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         activityManager.getMemoryInfo(memory)
 
-        val batteryManager = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
-        val temperatureTenths = batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_TEMPERATURE)
+        val batteryIntent = registerReceiver(
+            null,
+            android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        )
+        val temperatureTenths = batteryIntent?.getIntExtra(
+            android.os.BatteryManager.EXTRA_TEMPERATURE,
+            Int.MIN_VALUE
+        ) ?: Int.MIN_VALUE
         val temperature = if (temperatureTenths != Int.MIN_VALUE && temperatureTenths > 0) {
             String.format(java.util.Locale.US, "%.1f °C", temperatureTenths / 10.0)
         } else {
