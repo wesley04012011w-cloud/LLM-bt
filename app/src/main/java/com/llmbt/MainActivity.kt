@@ -1,9 +1,12 @@
 package com.llmbt
 
+import android.app.ActivityManager
+import android.app.usage.UsageStatsManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.provider.Settings
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -31,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var threadsButton: Button
     private lateinit var reloadModelsButton: Button
     private lateinit var resetHistoryButton: Button
+    private lateinit var analyzerButton: Button
     private lateinit var generationStatsText: TextView
     private lateinit var root: LinearLayout
     private lateinit var preferences: android.content.SharedPreferences
@@ -168,6 +172,19 @@ Não invente informações quando não souber a resposta."""
         })
         settingsRow.addView(threadsButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3) })
 
+        analyzerButton = Button(this).apply {
+            text = "Analisador"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener { showExecutionAnalyzer() }
+        }
+
+        val analyzerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(analyzerButton, LinearLayout.LayoutParams(-1, dp(44)))
+        }
+
         val modelActionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -194,6 +211,7 @@ Não invente informações quando não souber a resposta."""
         topBar.addView(generationStatsText, LinearLayout.LayoutParams(-1, dp(24)))
         topBar.addView(settingsRow, LinearLayout.LayoutParams(-1, dp(44)))
         topBar.addView(modelActionsRow, LinearLayout.LayoutParams(-1, dp(44)))
+        topBar.addView(analyzerRow, LinearLayout.LayoutParams(-1, dp(44)))
 
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -328,6 +346,7 @@ Não invente informações quando não souber a resposta."""
         threadsButton.isEnabled = false
         reloadModelsButton.isEnabled = false
         resetHistoryButton.isEnabled = false
+        analyzerButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
         currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
@@ -353,6 +372,7 @@ Não invente informações quando não souber a resposta."""
                     threadsButton.isEnabled = true
                     reloadModelsButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
+                    analyzerButton.isEnabled = true
                     scrollToBottom()
                 }
             } catch (throwable: Throwable) {
@@ -372,10 +392,127 @@ Não invente informações quando não souber a resposta."""
                     threadsButton.isEnabled = true
                     reloadModelsButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
+                    analyzerButton.isEnabled = true
                     scrollToBottom()
                 }
             }
         }.start()
+    }
+
+    private fun showExecutionAnalyzer() {
+        val memory = ActivityManager.MemoryInfo()
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        activityManager.getMemoryInfo(memory)
+
+        val batteryManager = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
+        val temperatureTenths = batteryManager.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_TEMPERATURE)
+        val temperature = if (temperatureTenths != Int.MIN_VALUE && temperatureTenths > 0) {
+            String.format(java.util.Locale.US, "%.1f °C", temperatureTenths / 10.0)
+        } else {
+            "indisponível"
+        }
+
+        val totalMb = memory.totalMem / (1024L * 1024L)
+        val availableMb = memory.availMem / (1024L * 1024L)
+        val usedMb = totalMb - availableMb
+        val usageAccess = hasUsageStatsAccess()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+        }
+
+        fun addText(text: String, size: Float = 14f, bold: Boolean = false) {
+            container.addView(TextView(this).apply {
+                this.text = text
+                textSize = size
+                setTextColor(Color.rgb(55, 55, 55))
+                if (bold) setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(0, dp(4), 0, dp(4))
+            })
+        }
+
+        addText("CPU / execução", 16f, true)
+        addText("LLM-BT: " + if (modelLoaded) "modelo em execução" else "nenhum modelo carregado")
+        addText("Threads: " + preferences.getInt(GENERATION_THREADS_KEY, DEFAULT_GENERATION_THREADS) +
+            " geração / " + preferences.getInt(BATCH_THREADS_KEY, DEFAULT_BATCH_THREADS) + " batch")
+        addText("RAM: ${usedMb} MB usados / ${totalMb} MB total (${availableMb} MB livres)")
+        addText("Temperatura da bateria: $temperature")
+
+        addText("Atividade em segundo plano", 16f, true)
+        if (!usageAccess) {
+            addText("⚠️ O acesso a estatísticas de uso ainda não foi concedido.")
+            addText("Isso permite ao LLM-BT identificar quais apps tiveram atividade recente. Não é uma lista perfeita de processos vivos.")
+        } else {
+            val usageStatsManager = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
+            val end = System.currentTimeMillis()
+            val begin = end - 6L * 60L * 60L * 1000L
+            val stats = usageStatsManager.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY,
+                begin,
+                end
+            ).orEmpty()
+                .filter { it.totalTimeInForeground > 0L && it.packageName != packageName }
+                .sortedByDescending { it.totalTimeInForeground }
+                .take(8)
+
+            if (stats.isEmpty()) {
+                addText("Nenhuma atividade recente encontrada.")
+            } else {
+                val packageManager = packageManager
+                stats.forEach { stat ->
+                    val label = try {
+                        packageManager.getApplicationLabel(
+                            packageManager.getApplicationInfo(stat.packageName, 0)
+                        ).toString()
+                    } catch (_: Exception) {
+                        stat.packageName
+                    }
+                    val minutes = stat.totalTimeInForeground / 60000L
+                    addText("• $label — ${minutes} min de uso recente")
+                }
+            }
+        }
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Analisador de execução")
+            .setView(container)
+            .setNegativeButton("Fechar", null)
+            .setNeutralButton(if (usageAccess) "Atualizar" else "Liberar acesso", null)
+            .setPositiveButton("Otimizar", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                if (usageAccess) {
+                    dialog.dismiss()
+                    showExecutionAnalyzer()
+                } else {
+                    try {
+                        startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    } catch (_: Exception) {
+                        startActivity(Intent(Settings.ACTION_SETTINGS))
+                    }
+                }
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                dialog.dismiss()
+                addStatusMessage("Análise: o Android não permite ao LLM-BT encerrar outros apps no modo normal. O próximo passo é adicionar suporte opcional a Shizuku/ADB.", dark = false)
+                AppLogger.write("Execution analyzer optimization requested")
+            }
+        }
+
+        dialog.show()
+    }
+
+    private fun hasUsageStatsAccess(): Boolean {
+        val appOps = getSystemService(APP_OPS_SERVICE) as android.app.AppOpsManager
+        val mode = appOps.unsafeCheckOpNoThrow(
+            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(),
+            packageName
+        )
+        return mode == android.app.AppOpsManager.MODE_ALLOWED
     }
 
     fun appendGeneratedToken(piece: String) {
@@ -879,6 +1016,7 @@ Não invente informações quando não souber a resposta."""
                     threadsButton.isEnabled = true
                     reloadModelsButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
+                    analyzerButton.isEnabled = true
                     scrollToBottom()
                 }
             } catch (throwable: Throwable) {
