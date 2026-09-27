@@ -29,7 +29,7 @@ jobs:
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
 
-      - name: Install Vulkan shader compiler
+      - name: Install Vulkan build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y glslc spirv-headers libvulkan-dev
@@ -37,6 +37,10 @@ jobs:
           SPIRV_HEADERS_CMAKE_DIR="$(dirname "$(dpkg -L spirv-headers | grep '/SPIRV-HeadersConfig.cmake$' | head -n 1)")"
           echo "SPIRV_HEADERS_CMAKE_DIR=$SPIRV_HEADERS_CMAKE_DIR"
           echo "CMAKE_PREFIX_PATH=$SPIRV_HEADERS_CMAKE_DIR:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+
+          git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/Vulkan-Headers"
+          test -f "$RUNNER_TEMP/Vulkan-Headers/include/vulkan/vulkan.hpp"
+          echo "VULKAN_HEADERS_INCLUDE_DIR=$RUNNER_TEMP/Vulkan-Headers/include" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
