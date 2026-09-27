@@ -48,6 +48,12 @@ jobs:
           echo "SPIRV_HEADERS_INCLUDE_DIR=$SPIRV_HEADERS_INCLUDE_DIR"
           echo "SPIRV_HEADERS_INCLUDE_DIR=$SPIRV_HEADERS_INCLUDE_DIR" >> "$GITHUB_ENV"
 
+          # ggml-vulkan includes SPIR-V C++ headers with <spirv/...>.
+          # Put them under the already-exported Vulkan-Headers include root so
+          # every Vulkan target sees both Khronos header trees.
+          cp -a "$SPIRV_HEADERS_INCLUDE_DIR/spirv" "$RUNNER_TEMP/Vulkan-Headers/include/"
+          test -f "$RUNNER_TEMP/Vulkan-Headers/include/spirv/unified1/spirv.hpp"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
