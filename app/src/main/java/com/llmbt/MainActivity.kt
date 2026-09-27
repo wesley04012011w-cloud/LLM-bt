@@ -372,7 +372,6 @@ Não invente informações quando não souber a resposta."""
                     threadsButton.isEnabled = true
                     reloadModelsButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
-                    analyzerButton.isEnabled = true
                     scrollToBottom()
                 }
             }
@@ -894,7 +893,6 @@ Não invente informações quando não souber a resposta."""
                     threadsButton.isEnabled = true
                     reloadModelsButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
-                    analyzerButton.isEnabled = true
                     scrollToBottom()
                 }
             } catch (throwable: Throwable) {
