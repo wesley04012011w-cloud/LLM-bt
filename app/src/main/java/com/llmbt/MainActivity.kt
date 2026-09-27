@@ -28,10 +28,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sendButton: Button
     private lateinit var systemPromptButton: Button
     private lateinit var samplingButton: Button
+    private lateinit var threadsButton: Button
+    private lateinit var reloadModelsButton: Button
+    private lateinit var resetHistoryButton: Button
+    private lateinit var generationStatsText: TextView
     private lateinit var root: LinearLayout
     private lateinit var preferences: android.content.SharedPreferences
     private var nativeLoaded = false
     private var modelLoaded = false
+    private var currentModelFile: File? = null
     @Volatile private var streamingResponseStarted = false
     private var currentAssistantMessage: TextView? = null
 
@@ -47,6 +52,8 @@ class MainActivity : AppCompatActivity() {
         topK: Int
     )
     private external fun setGenerationTokens(tokens: Int)
+    private external fun setThreadConfig(generationThreads: Int, batchThreads: Int)
+    private external fun resetConversation()
 
     companion object {
         private const val PICK_MODEL = 1001
@@ -58,6 +65,12 @@ class MainActivity : AppCompatActivity() {
         private const val TOP_P_KEY = "sampling_top_p"
         private const val TOP_K_KEY = "sampling_top_k"
         private const val GENERATION_TOKENS_KEY = "generation_tokens"
+        private const val GENERATION_THREADS_KEY = "generation_threads"
+        private const val BATCH_THREADS_KEY = "batch_threads"
+        private const val DEFAULT_GENERATION_THREADS = 7
+        private const val DEFAULT_BATCH_THREADS = 7
+        private const val MIN_THREADS = 1
+        private const val MAX_THREADS = 8
         private const val DEFAULT_TEMPERATURE = 0.30f
         private const val DEFAULT_MIN_P = 0.15f
         private const val DEFAULT_REPEAT_PENALTY = 1.05f
@@ -106,14 +119,21 @@ Não invente informações quando não souber a resposta."""
         }
 
         val importButton = Button(this).apply {
-            text = "Carregar modelo"
-            textSize = 13f
+            text = "Importar GGUF"
+            textSize = 12f
             isAllCaps = false
             setOnClickListener { openModelPicker() }
         }
 
         titleRow.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
-        titleRow.addView(importButton, LinearLayout.LayoutParams(dp(150), dp(48)))
+        titleRow.addView(importButton, LinearLayout.LayoutParams(dp(125), dp(48)))
+
+        generationStatsText = TextView(this).apply {
+            text = "Tokens: 0  |  tok/s: —"
+            textSize = 12f
+            setTextColor(Color.rgb(110, 110, 110))
+            setPadding(dp(4), 0, dp(4), dp(4))
+        }
 
         val settingsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -122,23 +142,58 @@ Não invente informações quando não souber a resposta."""
 
         systemPromptButton = Button(this).apply {
             text = "System"
-            textSize = 13f
+            textSize = 12f
             isAllCaps = false
             setOnClickListener { showSystemPromptDialog() }
         }
 
         samplingButton = Button(this).apply {
             text = "Sampling"
-            textSize = 13f
+            textSize = 12f
             isAllCaps = false
             setOnClickListener { showSamplingDialog() }
         }
 
-        settingsRow.addView(systemPromptButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(4) })
-        settingsRow.addView(samplingButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(4) })
+        threadsButton = Button(this).apply {
+            text = "Threads"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener { showThreadsDialog() }
+        }
+
+        settingsRow.addView(systemPromptButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(3) })
+        settingsRow.addView(samplingButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+            marginStart = dp(3)
+            marginEnd = dp(3)
+        })
+        settingsRow.addView(threadsButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3) })
+
+        val modelActionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        reloadModelsButton = Button(this).apply {
+            text = "Recarregar modelos"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener { showModelListDialog() }
+        }
+
+        resetHistoryButton = Button(this).apply {
+            text = "Resetar histórico"
+            textSize = 12f
+            isAllCaps = false
+            setOnClickListener { resetChatHistory() }
+        }
+
+        modelActionsRow.addView(reloadModelsButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(3) })
+        modelActionsRow.addView(resetHistoryButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3) })
 
         topBar.addView(titleRow, LinearLayout.LayoutParams(-1, dp(48)))
-        topBar.addView(settingsRow, LinearLayout.LayoutParams(-1, dp(48)))
+        topBar.addView(generationStatsText, LinearLayout.LayoutParams(-1, dp(24)))
+        topBar.addView(settingsRow, LinearLayout.LayoutParams(-1, dp(44)))
+        topBar.addView(modelActionsRow, LinearLayout.LayoutParams(-1, dp(44)))
 
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -270,10 +325,14 @@ Não invente informações quando não souber a resposta."""
         sendButton.isEnabled = false
         systemPromptButton.isEnabled = false
         samplingButton.isEnabled = false
+        threadsButton.isEnabled = false
+        reloadModelsButton.isEnabled = false
+        resetHistoryButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
         currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
         input.text.clear()
+        generationStatsText.text = "Tokens: 0  |  tok/s: —"
         AppLogger.write("Generation requested")
 
         Thread {
@@ -291,6 +350,9 @@ Não invente informações quando não souber a resposta."""
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
                     samplingButton.isEnabled = true
+                    threadsButton.isEnabled = true
+                    reloadModelsButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
                     scrollToBottom()
                 }
             } catch (throwable: Throwable) {
@@ -323,6 +385,17 @@ Não invente informações quando não souber a resposta."""
                 messageView.append(piece)
                 scrollToBottom()
             }
+        }
+    }
+
+    fun updateGenerationStats(tokens: Int, tokensPerSecond: Double) {
+        runOnUiThread {
+            val speed = if (tokensPerSecond > 0.0) {
+                String.format(java.util.Locale.US, "%.1f", tokensPerSecond)
+            } else {
+                "—"
+            }
+            generationStatsText.text = "Tokens: $tokens  |  tok/s: $speed"
         }
     }
 
@@ -447,6 +520,114 @@ Não invente informações quando não souber a resposta."""
 
             editor.requestFocus()
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        }
+
+        dialog.show()
+    }
+
+
+    private fun showThreadsDialog() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+        }
+
+        val generationLabel = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.rgb(75, 75, 75))
+            setPadding(0, dp(8), 0, dp(2))
+        }
+
+        val generationSeekBar = android.widget.SeekBar(this).apply {
+            max = MAX_THREADS - MIN_THREADS
+            progress = preferences.getInt(
+                GENERATION_THREADS_KEY,
+                DEFAULT_GENERATION_THREADS
+            ).coerceIn(MIN_THREADS, MAX_THREADS) - MIN_THREADS
+        }
+
+        val batchLabel = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.rgb(75, 75, 75))
+            setPadding(0, dp(8), 0, dp(2))
+        }
+
+        val batchSeekBar = android.widget.SeekBar(this).apply {
+            max = MAX_THREADS - MIN_THREADS
+            progress = preferences.getInt(
+                BATCH_THREADS_KEY,
+                DEFAULT_BATCH_THREADS
+            ).coerceIn(MIN_THREADS, MAX_THREADS) - MIN_THREADS
+        }
+
+        fun updateLabels() {
+            generationLabel.text = "Threads de geração: ${MIN_THREADS + generationSeekBar.progress}"
+            batchLabel.text = "Threads de prompt/batch: ${MIN_THREADS + batchSeekBar.progress}"
+        }
+
+        generationSeekBar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) = updateLabels()
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+        })
+
+        batchSeekBar.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) = updateLabels()
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) = Unit
+        })
+
+        updateLabels()
+
+        container.addView(generationLabel, LinearLayout.LayoutParams(-1, -2))
+        container.addView(generationSeekBar, LinearLayout.LayoutParams(-1, dp(48)))
+        container.addView(batchLabel, LinearLayout.LayoutParams(-1, -2))
+        container.addView(batchSeekBar, LinearLayout.LayoutParams(-1, dp(48)))
+
+        val note = TextView(this).apply {
+            text = "O valor de geração afeta o tok/s. O batch é usado principalmente no processamento do prompt. Recarregue o modelo para aplicar."
+            textSize = 12f
+            setTextColor(Color.rgb(120, 120, 120))
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        container.addView(note, LinearLayout.LayoutParams(-1, -2))
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Threads")
+            .setView(container)
+            .setNegativeButton("Cancelar", null)
+            .setNeutralButton("Restaurar padrão", null)
+            .setPositiveButton("Salvar", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                generationSeekBar.progress = DEFAULT_GENERATION_THREADS - MIN_THREADS
+                batchSeekBar.progress = DEFAULT_BATCH_THREADS - MIN_THREADS
+                updateLabels()
+            }
+
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val generation = MIN_THREADS + generationSeekBar.progress
+                val batch = MIN_THREADS + batchSeekBar.progress
+
+                preferences.edit()
+                    .putInt(GENERATION_THREADS_KEY, generation)
+                    .putInt(BATCH_THREADS_KEY, batch)
+                    .apply()
+
+                if (nativeLoaded) {
+                    setThreadConfig(generation, batch)
+                }
+
+                generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generation"
+                addStatusMessage(
+                    "Threads salvas: geração=$generation, batch=$batch. Recarregue o modelo para aplicar.",
+                    dark = false
+                )
+                AppLogger.write("Threads updated: generation=$generation batch=$batch")
+                dialog.dismiss()
+            }
         }
 
         dialog.show()
@@ -595,6 +776,175 @@ Não invente informações quando não souber a resposta."""
         dialog.show()
     }
 
+
+    private fun showModelListDialog() {
+        val modelsDir = File(filesDir, "models")
+        val models = modelsDir.listFiles()
+            ?.filter { it.isFile && it.name.lowercase().endsWith(".gguf") }
+            ?.sortedBy { it.name.lowercase() }
+            ?: emptyList()
+
+        if (models.isEmpty()) {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Modelos")
+                .setMessage("Nenhum GGUF foi salvo no app ainda.")
+                .setNegativeButton("Fechar", null)
+                .setPositiveButton("Importar GGUF") { _, _ -> openModelPicker() }
+                .show()
+            return
+        }
+
+        val names = models.map { file ->
+            val sizeMb = file.length() / (1024L * 1024L)
+            "${file.name}  (${sizeMb} MB)"
+        }.toTypedArray()
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Recarregar modelos")
+            .setItems(names) { _, which ->
+                loadPrivateModel(models[which])
+            }
+            .setNeutralButton("Importar novo GGUF") { _, _ -> openModelPicker() }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun loadPrivateModel(modelFile: File) {
+        if (!modelFile.exists()) {
+            addStatusMessage("ERRO: modelo não encontrado: ${modelFile.name}", dark = false)
+            return
+        }
+
+        reloadModelsButton.isEnabled = false
+        resetHistoryButton.isEnabled = false
+        systemPromptButton.isEnabled = false
+        samplingButton.isEnabled = false
+        threadsButton.isEnabled = false
+        sendButton.isEnabled = false
+        input.isEnabled = false
+
+        addStatusMessage("Carregando modelo: ${modelFile.name}", dark = false)
+        AppLogger.write("Reloading private GGUF: " + modelFile.absolutePath)
+
+        Thread {
+            try {
+                if (!nativeLoaded) {
+                    System.loadLibrary("llmbt")
+                    nativeLoaded = true
+                    setSystemPrompt(
+                        preferences.getString(SYSTEM_PROMPT_KEY, DEFAULT_SYSTEM_PROMPT)
+                            ?: DEFAULT_SYSTEM_PROMPT
+                    )
+                    setSamplingParams(
+                        preferences.getFloat(TEMPERATURE_KEY, DEFAULT_TEMPERATURE),
+                        preferences.getFloat(MIN_P_KEY, DEFAULT_MIN_P),
+                        preferences.getFloat(REPEAT_PENALTY_KEY, DEFAULT_REPEAT_PENALTY),
+                        preferences.getFloat(TOP_P_KEY, DEFAULT_TOP_P),
+                        preferences.getInt(TOP_K_KEY, DEFAULT_TOP_K)
+                    )
+                    setGenerationTokens(
+                        preferences.getInt(GENERATION_TOKENS_KEY, DEFAULT_GENERATION_TOKENS)
+                            .coerceIn(MIN_GENERATION_TOKENS, MAX_GENERATION_TOKENS)
+                    )
+                }
+
+                val generationThreads = preferences.getInt(
+                    GENERATION_THREADS_KEY,
+                    DEFAULT_GENERATION_THREADS
+                ).coerceIn(MIN_THREADS, MAX_THREADS)
+                val batchThreads = preferences.getInt(
+                    BATCH_THREADS_KEY,
+                    DEFAULT_BATCH_THREADS
+                ).coerceIn(MIN_THREADS, MAX_THREADS)
+                setThreadConfig(generationThreads, batchThreads)
+
+                val result = loadModel(modelFile.absolutePath)
+                val loaded = result.startsWith("Modelo carregado!")
+                modelLoaded = loaded
+                if (loaded) {
+                    currentModelFile = modelFile
+                }
+
+                AppLogger.write("Native reload result: " + result.replace("\n", " | "))
+
+                runOnUiThread {
+                    if (loaded) {
+                        generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generationThreads"
+                    }
+                    addStatusMessage(result, dark = loaded)
+                    input.isEnabled = true
+                    sendButton.isEnabled = true
+                    systemPromptButton.isEnabled = true
+                    samplingButton.isEnabled = true
+                    threadsButton.isEnabled = true
+                    reloadModelsButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
+                    scrollToBottom()
+                }
+            } catch (throwable: Throwable) {
+                AppLogger.exception("MODEL RELOAD FAILED", throwable)
+                runOnUiThread {
+                    addStatusMessage(
+                        "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
+                        dark = false
+                    )
+                    input.isEnabled = true
+                    sendButton.isEnabled = true
+                    systemPromptButton.isEnabled = true
+                    samplingButton.isEnabled = true
+                    threadsButton.isEnabled = true
+                    reloadModelsButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
+                }
+            }
+        }.start()
+    }
+
+    private fun resetChatHistory() {
+        if (!nativeLoaded || !modelLoaded) {
+            chat.removeAllViews()
+            currentAssistantMessage = null
+            streamingResponseStarted = false
+            generationStatsText.text = "Tokens: 0  |  tok/s: —"
+            addStatusMessage("Histórico visual resetado. Nenhum modelo carregado.", dark = false)
+            return
+        }
+
+        resetHistoryButton.isEnabled = false
+        sendButton.isEnabled = false
+        input.isEnabled = false
+
+        Thread {
+            try {
+                resetConversation()
+                runOnUiThread {
+                    chat.removeAllViews()
+                    currentAssistantMessage = null
+                    streamingResponseStarted = false
+                    generationStatsText.text = "Tokens: 0  |  tok/s: —"
+                    addStatusMessage("Histórico resetado. O modelo continua carregado.", dark = true)
+                    input.isEnabled = true
+                    sendButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
+                    scrollToBottom()
+                }
+                AppLogger.write("Conversation history reset")
+            } catch (throwable: Throwable) {
+                AppLogger.exception("RESET HISTORY FAILED", throwable)
+                runOnUiThread {
+                    addStatusMessage(
+                        "ERRO ao resetar histórico: " +
+                            (throwable.message ?: throwable.javaClass.simpleName),
+                        dark = false
+                    )
+                    input.isEnabled = true
+                    sendButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
+                }
+            }
+        }.start()
+    }
+
     private fun openModelPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -664,6 +1014,16 @@ Não invente informações quando não souber a resposta."""
                     AppLogger.write("Native library loaded successfully")
                 }
 
+                val generationThreads = preferences.getInt(
+                    GENERATION_THREADS_KEY,
+                    DEFAULT_GENERATION_THREADS
+                ).coerceIn(MIN_THREADS, MAX_THREADS)
+                val batchThreads = preferences.getInt(
+                    BATCH_THREADS_KEY,
+                    DEFAULT_BATCH_THREADS
+                ).coerceIn(MIN_THREADS, MAX_THREADS)
+                setThreadConfig(generationThreads, batchThreads)
+
                 runOnUiThread {
                     addStatusMessage("Carregando modelo na memória...", dark = false)
                 }
@@ -672,8 +1032,14 @@ Não invente informações quando não souber a resposta."""
                 val result = loadModel(modelFile.absolutePath)
                 AppLogger.write("Native load result: " + result.replace("\n", " | "))
                 modelLoaded = result.startsWith("Modelo carregado!")
+                if (modelLoaded) {
+                    currentModelFile = modelFile
+                }
 
                 runOnUiThread {
+                    if (modelLoaded) {
+                        generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generationThreads"
+                    }
                     addStatusMessage(result, dark = modelLoaded)
                 }
             } catch (throwable: Throwable) {
