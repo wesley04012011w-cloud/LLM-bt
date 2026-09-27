@@ -346,7 +346,6 @@ Não invente informações quando não souber a resposta."""
         threadsButton.isEnabled = false
         reloadModelsButton.isEnabled = false
         resetHistoryButton.isEnabled = false
-        analyzerButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
         currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
