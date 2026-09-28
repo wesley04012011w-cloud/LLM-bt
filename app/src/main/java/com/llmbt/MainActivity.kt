@@ -104,18 +104,7 @@ class MainActivity : AppCompatActivity() {
         private const val MIN_GENERATION_TOKENS = 64
         private const val MAX_GENERATION_TOKENS = 1024
         private const val GENERATION_TOKEN_STEP = 32
-        private const val DEFAULT_SYSTEM_PROMPT = """Você é o LLM-BT, um assistente local.
-Seu nome é LLM-BT.
-Quando alguém perguntar seu nome, responda que seu nome é LLM-BT.
-Quando alguém perguntar quem você é, diga que você é o LLM-BT, um assistente local.
-Nunca invente outro nome para si mesmo.
-Nunca diga que seu nome é Alex, Ana, João, Lúcio ou qualquer outro nome.
-Você foi criado como parte do projeto LLM-BT.
-
-Responda de forma natural, clara e direta.
-Prefira uma conversa humana e espontânea, evitando respostas robóticas, excessivamente formais ou desnecessariamente longas.
-Quando uma explicação simples for suficiente, não complique.
-Não invente informações quando não souber a resposta."""
+        private const val DEFAULT_SYSTEM_PROMPT = ""
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -217,8 +206,6 @@ Não invente informações quando não souber a resposta."""
             addView(chat)
         }
 
-        addStatusMessage("Motor nativo: pronto", dark = true)
-        addStatusMessage("Nenhum modelo carregado.", dark = false)
 
         input = EditText(this).apply {
             hint = "Digite uma mensagem..."
@@ -517,7 +504,7 @@ Não invente informações quando não souber a resposta."""
         currentAssistantStatsText = null
         streamingResponseStarted = false
         chat.removeAllViews()
-        addStatusMessage("Novo chat", dark = false)
+        showTransientCard("Novo chat")
         closeDrawer()
         scrollToBottom()
     }
@@ -584,7 +571,7 @@ Não invente informações quando não souber a resposta."""
         if (!targetModel.exists()) {
             currentChat = session
             renderChatSession(session)
-            addStatusMessage("Modelo deste chat não está mais disponível.", dark = false)
+            showTransientCard("Modelo deste chat não está mais disponível.")
             return
         }
 
@@ -650,7 +637,7 @@ Não invente informações quando não souber a resposta."""
             } catch (throwable: Throwable) {
                 AppLogger.exception("CHAT LOAD FAILED", throwable)
                 runOnUiThread {
-                    addStatusMessage("ERRO ao abrir chat: " + (throwable.message ?: throwable.javaClass.simpleName), dark = false)
+                    showTransientCard("ERRO ao abrir chat: " + throwable.message ?: throwable.javaClass.simpleName)
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
@@ -741,8 +728,7 @@ Não invente informações quando não souber a resposta."""
         if (message.isEmpty()) return
 
         if (!modelLoaded) {
-            addUserMessage(message)
-            addStatusMessage("Importe um modelo GGUF primeiro.", dark = false)
+            showTransientCard("Importe um modelo GGUF primeiro.")
             input.text.clear()
             return
         }
@@ -772,7 +758,7 @@ Não invente informações quando não souber a resposta."""
         resetHistoryButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
-        currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
+        currentAssistantMessage = addAssistantMessage("Reading...", loading = true)
         input.text.clear()
         AppLogger.write("Generation requested")
 
@@ -782,8 +768,9 @@ Não invente informações quando não souber a resposta."""
                 AppLogger.write("Generation result: " + result.replace("\n", " | "))
                 runOnUiThread {
                     if (!streamingResponseStarted) {
+                        val cleanResult = result.substringBefore("\n\n[perf]").trim()
                         currentAssistantMessage?.apply {
-                            text = "LLM: $result"
+                            text = cleanResult
                             setTextColor(primaryTextColor())
                         }
                     }
@@ -791,7 +778,7 @@ Não invente informações quando não souber a resposta."""
                     val assistantContent = if (streamingResponseStarted) {
                         streamingText.toString()
                     } else {
-                        result.substringBefore("\n\n[perf]")
+                        result.substringBefore("\n\n[perf]").trim()
                     }
                     if (assistantContent.isNotBlank()) {
                         currentChat?.messages?.add(ChatMessage("assistant", assistantContent))
@@ -814,10 +801,7 @@ Não invente informações quando não souber a resposta."""
                     currentAssistantMessage?.apply {
                         text = "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName)
                         setTextColor(Color.rgb(235, 90, 90))
-                    } ?: addStatusMessage(
-                        "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
-                        dark = false
-                    )
+                    }
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
@@ -838,12 +822,23 @@ Não invente informações quando não souber a resposta."""
         runOnUiThread {
             currentAssistantMessage?.let { messageView ->
                 if (!streamingResponseStarted) {
-                    messageView.text = "LLM:"
+                    messageView.text = ""
                     messageView.setTextColor(primaryTextColor())
                     streamingResponseStarted = true
                 }
                 messageView.append(piece)
                 scrollToBottom()
+            }
+        }
+    }
+
+    fun updateGenerationState(state: String) {
+        runOnUiThread {
+            currentAssistantMessage?.apply {
+                if (state.isNotEmpty() && !streamingResponseStarted) {
+                    text = state
+                    setTextColor(hintTextColor())
+                }
             }
         }
     }
@@ -927,24 +922,28 @@ Não invente informações quando não souber a resposta."""
         return view
     }
 
-    private fun addStatusMessage(message: String, dark: Boolean) {
-        val view = TextView(this).apply {
+    private fun showTransientCard(message: String) {
+        val card = TextView(this).apply {
             text = message
-            textSize = if (dark) 15f else 14f
-            setTextColor(
-                if (dark) secondaryTextColor()
-                else mutedTextColor()
-            )
-            setPadding(dp(4), dp(4), dp(4), dp(4))
+            textSize = 13f
+            setTextColor(primaryTextColor())
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedBackground(inputSurfaceColor(), 14f)
+            alpha = 0f
+            elevation = dp(2f)
         }
-
-        chat.addView(
-            view,
-            LinearLayout.LayoutParams(-1, -2).apply {
-                topMargin = dp(2)
-                bottomMargin = dp(2)
-            }
-        )
+        chat.addView(card, LinearLayout.LayoutParams(-1, dp(44)).apply {
+            topMargin = dp(6)
+            bottomMargin = dp(2)
+        })
+        card.animate().alpha(1f).setDuration(140).withEndAction {
+            card.postDelayed({
+                card.animate().alpha(0f).setDuration(180).withEndAction {
+                    chat.removeView(card)
+                }.start()
+            }, 2000)
+        }.start()
         scrollToBottom()
     }
 
@@ -983,18 +982,13 @@ Não invente informações quando não souber a resposta."""
 
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val prompt = editor.text.toString().trim()
-                if (prompt.isEmpty()) {
-                    editor.error = "O system prompt não pode ficar vazio."
-                    return@setOnClickListener
-                }
-
                 preferences.edit().putString(SYSTEM_PROMPT_KEY, prompt).apply()
 
                 if (nativeLoaded) {
                     setSystemPrompt(prompt)
                 }
 
-                addStatusMessage("System prompt atualizado.", dark = false)
+                showTransientCard(if (prompt.isEmpty()) "System prompt desativado." else "System prompt atualizado.")
                 AppLogger.write("System prompt updated from UI")
                 dialog.dismiss()
             }
@@ -1099,10 +1093,7 @@ Não invente informações quando não souber a resposta."""
                     .putInt(BATCH_THREADS_KEY, batch)
                     .apply()
 
-                addStatusMessage(
-                    "Threads salvas: geração=$generation, batch=$batch. Recarregue o modelo para aplicar.",
-                    dark = false
-                )
+                showTransientCard("Threads salvas. Recarregue o modelo para aplicar.")
                 AppLogger.write("Threads updated: generation=$generation batch=$batch")
                 dialog.dismiss()
             }
@@ -1289,7 +1280,7 @@ Não invente informações quando não souber a resposta."""
 
     private fun loadPrivateModel(modelFile: File) {
         if (!modelFile.exists()) {
-            addStatusMessage("ERRO: modelo não encontrado: ${modelFile.name}", dark = false)
+            showTransientCard("ERRO: modelo não encontrado.")
             return
         }
 
@@ -1301,7 +1292,7 @@ Não invente informações quando não souber a resposta."""
         sendButton.isEnabled = false
         input.isEnabled = false
 
-        addStatusMessage("Carregando modelo: ${modelFile.name}", dark = false)
+        showTransientCard("Carregando modelo...")
         AppLogger.write("Reloading private GGUF: " + modelFile.absolutePath)
 
         Thread {
@@ -1348,7 +1339,7 @@ Não invente informações quando não souber a resposta."""
                 runOnUiThread {
                     if (loaded) {
                     }
-                    addStatusMessage(result, dark = loaded)
+                    showTransientCard(if (loaded) "Modelo carregado." else result)
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
@@ -1383,7 +1374,7 @@ Não invente informações quando não souber a resposta."""
             currentAssistantMessage = null
             currentAssistantStatsText = null
             streamingResponseStarted = false
-            addStatusMessage("Histórico visual resetado. Nenhum modelo carregado.", dark = false)
+            showTransientCard("Histórico visual resetado.")
             return
         }
 
@@ -1399,7 +1390,7 @@ Não invente informações quando não souber a resposta."""
                     currentAssistantMessage = null
                     currentAssistantStatsText = null
                     streamingResponseStarted = false
-                    addStatusMessage("Histórico resetado. O modelo continua carregado.", dark = true)
+                    showTransientCard("Histórico resetado.")
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
@@ -1447,8 +1438,8 @@ Não invente informações quando não souber a resposta."""
     }
 
     private fun importAndLoadModel(uri: Uri) {
-        addStatusMessage("Importando modelo GGUF...", dark = false)
-        addStatusMessage("Copiando arquivo para o armazenamento privado do app...", dark = false)
+        showTransientCard("Importando modelo GGUF...")
+        showTransientCard("Copiando modelo...")
         AppLogger.write("GGUF selected: $uri")
 
         Thread {
