@@ -158,13 +158,6 @@ Não invente informações quando não souber a resposta."""
             setOnClickListener { showEngineMenu() }
         }
 
-        val importButton = Button(this).apply {
-            text = "Importar GGUF"
-            textSize = 12f
-            isAllCaps = false
-            setOnClickListener { openModelPicker() }
-        }
-
         titleRow.addView(menuButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         titleRow.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
         titleRow.addView(engineButton, LinearLayout.LayoutParams(dp(48), dp(48)))
@@ -335,7 +328,19 @@ Não invente informações quando não souber a resposta."""
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
 
-        fun addAction(button: Button) {
+        fun addAction(
+            label: String,
+            enabled: Boolean,
+            action: () -> Unit
+        ) {
+            val button = Button(this).apply {
+                text = label
+                textSize = 13f
+                isAllCaps = false
+                isEnabled = enabled
+                setOnClickListener { action() }
+            }
+
             container.addView(
                 button,
                 LinearLayout.LayoutParams(-1, dp(48)).apply {
@@ -344,12 +349,30 @@ Não invente informações quando não souber a resposta."""
             )
         }
 
-        addAction(importButtonForEngine())
-        addAction(systemPromptButton)
-        addAction(samplingButton)
-        addAction(threadsButton)
-        addAction(reloadModelsButton)
-        addAction(resetHistoryButton)
+        addAction("Importar GGUF", true) {
+            dialog.dismiss()
+            openModelPicker()
+        }
+        addAction("System", systemPromptButton.isEnabled) {
+            dialog.dismiss()
+            showSystemPromptDialog()
+        }
+        addAction("Sampling", samplingButton.isEnabled) {
+            dialog.dismiss()
+            showSamplingDialog()
+        }
+        addAction("Threads", threadsButton.isEnabled) {
+            dialog.dismiss()
+            showThreadsDialog()
+        }
+        addAction("Recarregar modelos", reloadModelsButton.isEnabled) {
+            dialog.dismiss()
+            showModelListDialog()
+        }
+        addAction("Resetar histórico", resetHistoryButton.isEnabled) {
+            dialog.dismiss()
+            resetChatHistory()
+        }
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Engine")
@@ -357,31 +380,7 @@ Não invente informações quando não souber a resposta."""
             .setNegativeButton("Fechar", null)
             .create()
 
-        importButtonForEngine().apply {
-            setOnClickListener {
-                dialog.dismiss()
-                openModelPicker()
-            }
-        }.also { importButton ->
-            container.removeViewAt(0)
-            container.addView(
-                importButton,
-                0,
-                LinearLayout.LayoutParams(-1, dp(48)).apply {
-                    bottomMargin = dp(4)
-                }
-            )
-        }
-
         dialog.show()
-    }
-
-    private fun importButtonForEngine(): Button {
-        return Button(this).apply {
-            text = "Importar GGUF"
-            textSize = 13f
-            isAllCaps = false
-        }
     }
 
     private fun setupDrawer() {
