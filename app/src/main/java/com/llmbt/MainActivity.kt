@@ -153,7 +153,7 @@ Não invente informações quando não souber a resposta."""
         val title = TextView(this).apply {
             text = ""
             textSize = 20f
-            setTextColor(Color.rgb(32, 33, 36))
+            setTextColor(primaryTextColor())
             setTypeface(null, android.graphics.Typeface.BOLD)
         }
 
@@ -161,7 +161,7 @@ Não invente informações quando não souber a resposta."""
             text = "⚙"
             textSize = 25f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(32, 33, 36))
+            setTextColor(primaryTextColor())
             contentDescription = "Abrir engine"
             setOnClickListener { showEngineMenu() }
         }
@@ -223,8 +223,8 @@ Não invente informações quando não souber a resposta."""
         input = EditText(this).apply {
             hint = "Digite uma mensagem..."
             textSize = 16f
-            setTextColor(Color.rgb(32, 33, 36))
-            setHintTextColor(Color.rgb(125, 125, 125))
+            setTextColor(primaryTextColor())
+            setHintTextColor(hintTextColor())
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             imeOptions = EditorInfo.IME_ACTION_SEND
             minLines = 1
@@ -430,7 +430,7 @@ Não invente informações quando não souber a resposta."""
 
         drawerPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(backgroundColor())
             elevation = dp(12f)
             translationX = -dp(300f)
         }
@@ -445,14 +445,14 @@ Não invente informações quando não souber a resposta."""
             text = "Chats"
             textSize = 22f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setTextColor(Color.rgb(32, 33, 36))
+            setTextColor(primaryTextColor())
         }
 
         val closeButton = TextView(this).apply {
             text = "×"
             textSize = 28f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(70, 70, 70))
+            setTextColor(secondaryTextColor())
             setOnClickListener { closeDrawer() }
         }
 
@@ -1031,7 +1031,7 @@ Não invente informações quando não souber a resposta."""
 
         val batchLabel = TextView(this).apply {
             textSize = 13f
-            setTextColor(Color.rgb(75, 75, 75))
+            setTextColor(secondaryTextColor())
             setPadding(0, dp(8), 0, dp(2))
         }
 
@@ -1070,7 +1070,7 @@ Não invente informações quando não souber a resposta."""
         val note = TextView(this).apply {
             text = "O valor de geração afeta o tok/s. O batch é usado principalmente no processamento do prompt. Recarregue o modelo para aplicar."
             textSize = 12f
-            setTextColor(Color.rgb(120, 120, 120))
+            setTextColor(secondaryTextColor())
             setPadding(0, dp(8), 0, dp(4))
         }
         container.addView(note, LinearLayout.LayoutParams(-1, -2))
@@ -1150,7 +1150,7 @@ Não invente informações quando não souber a resposta."""
 
         val generationLabel = TextView(this).apply {
             textSize = 13f
-            setTextColor(Color.rgb(75, 75, 75))
+            setTextColor(secondaryTextColor())
             setPadding(0, dp(10), 0, dp(2))
         }
 
