@@ -774,7 +774,6 @@ Não invente informações quando não souber a resposta."""
         addUserMessage(message)
         currentAssistantMessage = addAssistantMessage("LLM: gerando...", loading = true)
         input.text.clear()
-        generationStatsText.text = "Tokens: 0  |  tok/s: —"
         AppLogger.write("Generation requested")
 
         Thread {
@@ -1100,7 +1099,6 @@ Não invente informações quando não souber a resposta."""
                     .putInt(BATCH_THREADS_KEY, batch)
                     .apply()
 
-                generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generation"
                 addStatusMessage(
                     "Threads salvas: geração=$generation, batch=$batch. Recarregue o modelo para aplicar.",
                     dark = false
@@ -1349,7 +1347,6 @@ Não invente informações quando não souber a resposta."""
 
                 runOnUiThread {
                     if (loaded) {
-                        generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generationThreads"
                     }
                     addStatusMessage(result, dark = loaded)
                     input.isEnabled = true
@@ -1384,8 +1381,8 @@ Não invente informações quando não souber a resposta."""
         if (!nativeLoaded || !modelLoaded) {
             chat.removeAllViews()
             currentAssistantMessage = null
+            currentAssistantStatsText = null
             streamingResponseStarted = false
-            generationStatsText.text = "Tokens: 0  |  tok/s: —"
             addStatusMessage("Histórico visual resetado. Nenhum modelo carregado.", dark = false)
             return
         }
@@ -1400,8 +1397,8 @@ Não invente informações quando não souber a resposta."""
                 runOnUiThread {
                     chat.removeAllViews()
                     currentAssistantMessage = null
+                    currentAssistantStatsText = null
                     streamingResponseStarted = false
-                    generationStatsText.text = "Tokens: 0  |  tok/s: —"
                     addStatusMessage("Histórico resetado. O modelo continua carregado.", dark = true)
                     input.isEnabled = true
                     sendButton.isEnabled = true
@@ -1526,7 +1523,6 @@ Não invente informações quando não souber a resposta."""
 
                 runOnUiThread {
                     if (modelLoaded) {
-                        generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: $generationThreads"
                     }
                     addStatusMessage(result, dark = modelLoaded)
                 }
