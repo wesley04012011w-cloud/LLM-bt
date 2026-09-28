@@ -323,6 +323,8 @@ Não invente informações quando não souber a resposta."""
     }
 
     private fun showEngineMenu() {
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -374,7 +376,7 @@ Não invente informações quando não souber a resposta."""
             resetChatHistory()
         }
 
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+        dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Engine")
             .setView(container)
             .setNegativeButton("Fechar", null)
