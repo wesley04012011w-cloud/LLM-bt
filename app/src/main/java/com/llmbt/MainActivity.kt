@@ -11,6 +11,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -19,6 +20,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import java.io.File
+import java.util.UUID
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
@@ -32,7 +36,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var reloadModelsButton: Button
     private lateinit var resetHistoryButton: Button
     private lateinit var generationStatsText: TextView
-    private lateinit var root: LinearLayout
+    private lateinit var root: FrameLayout
+    private lateinit var drawerPanel: LinearLayout
+    private lateinit var drawerScrim: View
+    private lateinit var drawerChats: LinearLayout
+    private val chatSessions = mutableListOf<ChatSession>()
+    private var currentChat: ChatSession? = null
+    private val streamingText = StringBuilder()
     private lateinit var preferences: android.content.SharedPreferences
     private var nativeLoaded = false
     private var modelLoaded = false
@@ -54,6 +64,17 @@ class MainActivity : AppCompatActivity() {
     private external fun setGenerationTokens(tokens: Int)
     private external fun setThreadConfig(generationThreads: Int, batchThreads: Int)
     private external fun resetConversation()
+    private external fun restoreConversationHistory(roles: Array<String>, contents: Array<String>)
+
+    private data class ChatMessage(val role: String, val content: String)
+
+    private data class ChatSession(
+        val id: String,
+        var title: String,
+        var modelName: String,
+        var modelPath: String,
+        val messages: MutableList<ChatMessage> = mutableListOf()
+    )
 
     companion object {
         private const val PICK_MODEL = 1001
@@ -67,8 +88,9 @@ class MainActivity : AppCompatActivity() {
         private const val GENERATION_TOKENS_KEY = "generation_tokens"
         private const val GENERATION_THREADS_KEY = "generation_threads"
         private const val BATCH_THREADS_KEY = "batch_threads"
-        private const val DEFAULT_GENERATION_THREADS = 7
-        private const val DEFAULT_BATCH_THREADS = 7
+        private const val CHATS_FILE = "chats.json"
+        private const val DEFAULT_GENERATION_THREADS = 4
+        private const val DEFAULT_BATCH_THREADS = 4
         private const val MIN_THREADS = 1
         private const val MAX_THREADS = 8
         private const val DEFAULT_TEMPERATURE = 0.30f
@@ -111,6 +133,15 @@ Não invente informações quando não souber a resposta."""
             gravity = Gravity.CENTER_VERTICAL
         }
 
+        val menuButton = TextView(this).apply {
+            text = "☰"
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(32, 33, 36))
+            contentDescription = "Abrir chats"
+            setOnClickListener { toggleDrawer() }
+        }
+
         val title = TextView(this).apply {
             text = "LLM BT"
             textSize = 20f
@@ -125,6 +156,7 @@ Não invente informações quando não souber a resposta."""
             setOnClickListener { openModelPicker() }
         }
 
+        titleRow.addView(menuButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         titleRow.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
         titleRow.addView(importButton, LinearLayout.LayoutParams(dp(125), dp(48)))
 
@@ -269,23 +301,22 @@ Não invente informações quando não souber a resposta."""
             )
         }
 
-        root = LinearLayout(this).apply {
+        val mainContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
 
-            addView(
-                topBar,
-                LinearLayout.LayoutParams(-1, -2)
-            )
-            addView(
-                scrollView,
-                LinearLayout.LayoutParams(-1, 0, 1f)
-            )
-            addView(
-                controls,
-                LinearLayout.LayoutParams(-1, -2)
-            )
+            addView(topBar, LinearLayout.LayoutParams(-1, -2))
+            addView(scrollView, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(controls, LinearLayout.LayoutParams(-1, -2))
         }
+
+        root = FrameLayout(this).apply {
+            setBackgroundColor(Color.WHITE)
+            addView(mainContent, FrameLayout.LayoutParams(-1, -1))
+        }
+
+        setupDrawer()
+        loadChats()
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -306,8 +337,325 @@ Não invente informações quando não souber a resposta."""
 
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
+        refreshDrawerChats()
 
         AppLogger.write("MainActivity.onCreate completed")
+    }
+
+    private fun setupDrawer() {
+        drawerScrim = View(this).apply {
+            setBackgroundColor(Color.argb(120, 0, 0, 0))
+            alpha = 0f
+            visibility = View.GONE
+            setOnClickListener { closeDrawer() }
+        }
+
+        drawerPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            elevation = dp(12f)
+            translationX = -dp(300f)
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(12), dp(12), dp(8))
+        }
+
+        val headerTitle = TextView(this).apply {
+            text = "Chats"
+            textSize = 22f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(32, 33, 36))
+        }
+
+        val closeButton = TextView(this).apply {
+            text = "×"
+            textSize = 28f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(70, 70, 70))
+            setOnClickListener { closeDrawer() }
+        }
+
+        header.addView(headerTitle, LinearLayout.LayoutParams(0, dp(48), 1f))
+        header.addView(closeButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+
+        val newChatButton = Button(this).apply {
+            text = "+ Novo chat"
+            textSize = 14f
+            isAllCaps = false
+            setOnClickListener { createNewChat() }
+        }
+
+        drawerChats = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(16))
+        }
+
+        val chatsScroll = ScrollView(this).apply {
+            addView(drawerChats)
+        }
+
+        drawerPanel.addView(header, LinearLayout.LayoutParams(-1, -2))
+        drawerPanel.addView(newChatButton, LinearLayout.LayoutParams(-1, dp(48)).apply {
+            marginStart = dp(12)
+            marginEnd = dp(12)
+            bottomMargin = dp(8)
+        })
+        drawerPanel.addView(chatsScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        root.addView(drawerScrim, FrameLayout.LayoutParams(-1, -1))
+        root.addView(drawerPanel, FrameLayout.LayoutParams(dp(300), -1, Gravity.START))
+    }
+
+    private fun toggleDrawer() {
+        if (drawerPanel.translationX < 0f) openDrawer() else closeDrawer()
+    }
+
+    private fun openDrawer() {
+        refreshDrawerChats()
+        drawerScrim.visibility = View.VISIBLE
+        drawerScrim.animate().alpha(1f).setDuration(180).start()
+        drawerPanel.animate().translationX(0f).setDuration(220).start()
+    }
+
+    private fun closeDrawer() {
+        drawerScrim.animate().alpha(0f).setDuration(160).withEndAction {
+            drawerScrim.visibility = View.GONE
+        }.start()
+        drawerPanel.animate().translationX(-dp(300f)).setDuration(200).start()
+    }
+
+    private fun createNewChat() {
+        if (!input.isEnabled) return
+        saveChats()
+        if (nativeLoaded && modelLoaded) {
+            resetConversation()
+        }
+        currentChat = null
+        streamingText.clear()
+        currentAssistantMessage = null
+        streamingResponseStarted = false
+        chat.removeAllViews()
+        generationStatsText.text = "Tokens: 0  |  tok/s: —"
+        addStatusMessage("Novo chat", dark = false)
+        closeDrawer()
+        scrollToBottom()
+    }
+
+    private fun refreshDrawerChats() {
+        if (!::drawerChats.isInitialized) return
+        drawerChats.removeAllViews()
+
+        if (chatSessions.isEmpty()) {
+            val empty = TextView(this).apply {
+                text = "Nenhum chat salvo ainda.\n\nA primeira mensagem cria um chat."
+                textSize = 14f
+                setTextColor(Color.rgb(120, 120, 120))
+                setPadding(dp(12), dp(20), dp(12), dp(20))
+            }
+            drawerChats.addView(empty)
+            return
+        }
+
+        for (session in chatSessions) {
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = roundedBackground(
+                    if (session.id == currentChat?.id) Color.rgb(238, 238, 238) else Color.TRANSPARENT,
+                    12f
+                )
+                setOnClickListener { selectChat(session) }
+            }
+
+            val title = TextView(this).apply {
+                text = session.title
+                textSize = 15f
+                setTextColor(Color.rgb(35, 35, 35))
+                maxLines = 2
+            }
+
+            val model = TextView(this).apply {
+                text = if (session.modelName.isBlank()) "Modelo não disponível" else session.modelName
+                textSize = 12f
+                setTextColor(Color.rgb(120, 120, 120))
+                setPadding(0, dp(3), 0, 0)
+                maxLines = 1
+            }
+
+            item.addView(title, LinearLayout.LayoutParams(-1, -2))
+            item.addView(model, LinearLayout.LayoutParams(-1, -2))
+            drawerChats.addView(item, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(2)
+            })
+        }
+    }
+
+    private fun selectChat(session: ChatSession) {
+        if (session.id == currentChat?.id) {
+            closeDrawer()
+            return
+        }
+
+        saveChats()
+        closeDrawer()
+
+        val targetModel = File(session.modelPath)
+        if (!targetModel.exists()) {
+            currentChat = session
+            renderChatSession(session)
+            addStatusMessage("Modelo deste chat não está mais disponível.", dark = false)
+            return
+        }
+
+        input.isEnabled = false
+        sendButton.isEnabled = false
+        systemPromptButton.isEnabled = false
+        samplingButton.isEnabled = false
+        threadsButton.isEnabled = false
+        reloadModelsButton.isEnabled = false
+        resetHistoryButton.isEnabled = false
+
+        Thread {
+            try {
+                if (!nativeLoaded) {
+                    System.loadLibrary("llmbt")
+                    nativeLoaded = true
+                    setSystemPrompt(preferences.getString(SYSTEM_PROMPT_KEY, DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT)
+                    setSamplingParams(
+                        preferences.getFloat(TEMPERATURE_KEY, DEFAULT_TEMPERATURE),
+                        preferences.getFloat(MIN_P_KEY, DEFAULT_MIN_P),
+                        preferences.getFloat(REPEAT_PENALTY_KEY, DEFAULT_REPEAT_PENALTY),
+                        preferences.getFloat(TOP_P_KEY, DEFAULT_TOP_P),
+                        preferences.getInt(TOP_K_KEY, DEFAULT_TOP_K)
+                    )
+                    setGenerationTokens(
+                        preferences.getInt(GENERATION_TOKENS_KEY, DEFAULT_GENERATION_TOKENS)
+                            .coerceIn(MIN_GENERATION_TOKENS, MAX_GENERATION_TOKENS)
+                    )
+                }
+
+                val generationThreads = preferences.getInt(GENERATION_THREADS_KEY, DEFAULT_GENERATION_THREADS)
+                    .coerceIn(MIN_THREADS, MAX_THREADS)
+                val batchThreads = preferences.getInt(BATCH_THREADS_KEY, DEFAULT_BATCH_THREADS)
+                    .coerceIn(MIN_THREADS, MAX_THREADS)
+                setThreadConfig(generationThreads, batchThreads)
+
+                if (!modelLoaded || currentModelFile?.absolutePath != targetModel.absolutePath) {
+                    val result = loadModel(targetModel.absolutePath)
+                    if (!result.startsWith("Modelo carregado!")) {
+                        throw IllegalStateException(result)
+                    }
+                }
+
+                val roles = session.messages.map { it.role }.toTypedArray()
+                val contents = session.messages.map { it.content }.toTypedArray()
+                restoreConversationHistory(roles, contents)
+
+                currentModelFile = targetModel
+                modelLoaded = true
+                currentChat = session
+
+                runOnUiThread {
+                    renderChatSession(session)
+                    generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: " + generationThreads
+                    input.isEnabled = true
+                    sendButton.isEnabled = true
+                    systemPromptButton.isEnabled = true
+                    samplingButton.isEnabled = true
+                    threadsButton.isEnabled = true
+                    reloadModelsButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
+                    refreshDrawerChats()
+                }
+            } catch (throwable: Throwable) {
+                AppLogger.exception("CHAT LOAD FAILED", throwable)
+                runOnUiThread {
+                    addStatusMessage("ERRO ao abrir chat: " + (throwable.message ?: throwable.javaClass.simpleName), dark = false)
+                    input.isEnabled = true
+                    sendButton.isEnabled = true
+                    systemPromptButton.isEnabled = true
+                    samplingButton.isEnabled = true
+                    threadsButton.isEnabled = true
+                    reloadModelsButton.isEnabled = true
+                    resetHistoryButton.isEnabled = true
+                }
+            }
+        }.start()
+    }
+
+    private fun renderChatSession(session: ChatSession) {
+        chat.removeAllViews()
+        currentAssistantMessage = null
+        streamingResponseStarted = false
+        streamingText.clear()
+
+        for (message in session.messages) {
+            if (message.role == "user") {
+                addUserMessage(message.content)
+            } else if (message.role == "assistant") {
+                addAssistantMessage("LLM: " + message.content, loading = false)
+            }
+        }
+        scrollToBottom()
+    }
+
+    private fun loadChats() {
+        val file = File(filesDir, CHATS_FILE)
+        if (!file.exists()) return
+
+        try {
+            val array = JSONArray(file.readText())
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val messages = mutableListOf<ChatMessage>()
+                val msgArray = obj.optJSONArray("messages") ?: JSONArray()
+                for (j in 0 until msgArray.length()) {
+                    val msg = msgArray.getJSONObject(j)
+                    messages.add(ChatMessage(msg.optString("role"), msg.optString("content")))
+                }
+                chatSessions.add(
+                    ChatSession(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        title = obj.optString("title", "Novo chat"),
+                        modelName = obj.optString("modelName", ""),
+                        modelPath = obj.optString("modelPath", ""),
+                        messages = messages
+                    )
+                )
+            }
+        } catch (throwable: Throwable) {
+            AppLogger.exception("CHAT STORE LOAD FAILED", throwable)
+        }
+    }
+
+    private fun saveChats() {
+        try {
+            val array = JSONArray()
+            for (session in chatSessions) {
+                val obj = JSONObject()
+                    .put("id", session.id)
+                    .put("title", session.title)
+                    .put("modelName", session.modelName)
+                    .put("modelPath", session.modelPath)
+
+                val messages = JSONArray()
+                for (message in session.messages) {
+                    messages.put(
+                        JSONObject()
+                            .put("role", message.role)
+                            .put("content", message.content)
+                    )
+                }
+                obj.put("messages", messages)
+                array.put(obj)
+            }
+            File(filesDir, CHATS_FILE).writeText(array.toString())
+        } catch (throwable: Throwable) {
+            AppLogger.exception("CHAT STORE SAVE FAILED", throwable)
+        }
     }
 
     private fun sendMessage() {
@@ -320,6 +668,22 @@ Não invente informações quando não souber a resposta."""
             input.text.clear()
             return
         }
+
+        if (currentChat == null) {
+            val model = currentModelFile
+            currentChat = ChatSession(
+                id = UUID.randomUUID().toString(),
+                title = message.take(48),
+                modelName = model?.name ?: "Sem modelo",
+                modelPath = model?.absolutePath ?: ""
+            )
+            chatSessions.add(0, currentChat!!)
+            refreshDrawerChats()
+        }
+
+        currentChat?.messages?.add(ChatMessage("user", message))
+        saveChats()
+        streamingText.clear()
 
         input.isEnabled = false
         sendButton.isEnabled = false
@@ -346,6 +710,17 @@ Não invente informações quando não souber a resposta."""
                             setTextColor(Color.rgb(32, 33, 36))
                         }
                     }
+
+                    val assistantContent = if (streamingResponseStarted) {
+                        streamingText.toString()
+                    } else {
+                        result.substringBefore("\n\n[perf]")
+                    }
+                    if (assistantContent.isNotBlank()) {
+                        currentChat?.messages?.add(ChatMessage("assistant", assistantContent))
+                        saveChats()
+                        refreshDrawerChats()
+                    }
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
@@ -357,6 +732,7 @@ Não invente informações quando não souber a resposta."""
                 }
             } catch (throwable: Throwable) {
                 AppLogger.exception("TEXT GENERATION FAILED", throwable)
+                saveChats()
                 runOnUiThread {
                     currentAssistantMessage?.apply {
                         text = "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName)
@@ -380,17 +756,8 @@ Não invente informações quando não souber a resposta."""
 
 
 
-    private fun hasUsageStatsAccess(): Boolean {
-        val appOps = getSystemService(APP_OPS_SERVICE) as android.app.AppOpsManager
-        val mode = appOps.unsafeCheckOpNoThrow(
-            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
-            android.os.Process.myUid(),
-            packageName
-        )
-        return mode == android.app.AppOpsManager.MODE_ALLOWED
-    }
-
     fun appendGeneratedToken(piece: String) {
+        streamingText.append(piece)
         runOnUiThread {
             currentAssistantMessage?.let { messageView ->
                 if (!streamingResponseStarted) {
@@ -940,6 +1307,9 @@ Não invente informações quando não souber a resposta."""
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
+                    currentChat?.messages?.clear()
+                    saveChats()
+                    refreshDrawerChats()
                     scrollToBottom()
                 }
                 AppLogger.write("Conversation history reset")
@@ -1048,6 +1418,11 @@ Não invente informações quando não souber a resposta."""
                 modelLoaded = result.startsWith("Modelo carregado!")
                 if (modelLoaded) {
                     currentModelFile = modelFile
+                    currentChat?.let {
+                        it.modelName = modelFile.name
+                        it.modelPath = modelFile.absolutePath
+                        saveChats()
+                    }
                 }
 
                 runOnUiThread {
@@ -1082,6 +1457,20 @@ Não invente informações quando não souber a resposta."""
             }
         }
         return null
+    }
+
+    override fun onPause() {
+        saveChats()
+        super.onPause()
+    }
+
+    @Deprecated("Use OnBackPressedDispatcher on newer navigation flows")
+    override fun onBackPressed() {
+        if (::drawerPanel.isInitialized && drawerPanel.translationX >= 0f) {
+            closeDrawer()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     private fun roundedBackground(color: Int, radiusDp: Float): GradientDrawable {
