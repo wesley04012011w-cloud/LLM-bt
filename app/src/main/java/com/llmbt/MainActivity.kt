@@ -1236,7 +1236,7 @@ class MainActivity : AppCompatActivity() {
                     setGenerationTokens(generationValue)
                 }
 
-                addStatusMessage("Sampling atualizado. Tokens de geração: $generationValue.", dark = false)
+                showTransientCard("Sampling atualizado. Tokens: $generationValue.")
                 AppLogger.write("Sampling updated: temp=$tempValue min_p=$minPValue repeat=$repeatValue top_p=$topPValue top_k=$topKValue generation_tokens=$generationValue")
                 dialog.dismiss()
             }
@@ -1352,10 +1352,7 @@ class MainActivity : AppCompatActivity() {
             } catch (throwable: Throwable) {
                 AppLogger.exception("MODEL RELOAD FAILED", throwable)
                 runOnUiThread {
-                    addStatusMessage(
-                        "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
-                        dark = false
-                    )
+                    showTransientCard("ERRO: " + (throwable.message ?: throwable.javaClass.simpleName))
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
@@ -1403,11 +1400,7 @@ class MainActivity : AppCompatActivity() {
             } catch (throwable: Throwable) {
                 AppLogger.exception("RESET HISTORY FAILED", throwable)
                 runOnUiThread {
-                    addStatusMessage(
-                        "ERRO ao resetar histórico: " +
-                            (throwable.message ?: throwable.javaClass.simpleName),
-                        dark = false
-                    )
+                    showTransientCard("ERRO ao resetar histórico: " + (throwable.message ?: throwable.javaClass.simpleName))
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     resetHistoryButton.isEnabled = true
@@ -1463,7 +1456,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 runOnUiThread {
-                    addStatusMessage("Arquivo copiado. Inicializando llama.cpp...", dark = false)
+                    showTransientCard("Arquivo copiado. Inicializando llama.cpp...")
                 }
 
                 if (!nativeLoaded) {
@@ -1496,7 +1489,7 @@ class MainActivity : AppCompatActivity() {
                 setThreadConfig(generationThreads, batchThreads)
 
                 runOnUiThread {
-                    addStatusMessage("Carregando modelo na memória...", dark = false)
+                    showTransientCard("Carregando modelo...")
                 }
 
                 AppLogger.write("Loading GGUF: " + modelFile.absolutePath)
@@ -1515,15 +1508,12 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (modelLoaded) {
                     }
-                    addStatusMessage(result, dark = modelLoaded)
+                    showTransientCard(if (modelLoaded) "Modelo carregado." else result)
                 }
             } catch (throwable: Throwable) {
                 AppLogger.exception("GGUF IMPORT/LOAD FAILED", throwable)
                 runOnUiThread {
-                    addStatusMessage(
-                        "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
-                        dark = false
-                    )
+                    showTransientCard("ERRO: " + (throwable.message ?: throwable.javaClass.simpleName))
                 }
             }
         }.start()
