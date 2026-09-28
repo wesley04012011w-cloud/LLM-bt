@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
@@ -35,7 +36,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var threadsButton: Button
     private lateinit var reloadModelsButton: Button
     private lateinit var resetHistoryButton: Button
-    private lateinit var generationStatsText: TextView
     private lateinit var root: FrameLayout
     private lateinit var drawerPanel: LinearLayout
     private lateinit var drawerScrim: View
@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private var currentModelFile: File? = null
     @Volatile private var streamingResponseStarted = false
     private var currentAssistantMessage: TextView? = null
+    private var currentAssistantStatsText: TextView? = null
 
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
@@ -89,6 +90,7 @@ class MainActivity : AppCompatActivity() {
         private const val GENERATION_THREADS_KEY = "generation_threads"
         private const val BATCH_THREADS_KEY = "batch_threads"
         private const val CHATS_FILE = "chats.json"
+        private const val DARK_MODE_KEY = "dark_mode"
         private const val DEFAULT_GENERATION_THREADS = 4
         private const val DEFAULT_BATCH_THREADS = 4
         private const val MIN_THREADS = 1
@@ -122,6 +124,12 @@ Não invente informações quando não souber a resposta."""
         AppLogger.write("MainActivity.onCreate started")
         AppLogger.write("Native engine will be loaded on demand")
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        delegate.localNightMode = if (preferences.getBoolean(DARK_MODE_KEY, false)) {
+            AppCompatDelegate.MODE_NIGHT_YES
+        } else {
+            AppCompatDelegate.MODE_NIGHT_NO
+        }
+        applySystemBarTheme()
 
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -137,13 +145,13 @@ Não invente informações quando não souber a resposta."""
             text = "☰"
             textSize = 26f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(32, 33, 36))
+            setTextColor(primaryTextColor())
             contentDescription = "Abrir chats"
             setOnClickListener { toggleDrawer() }
         }
 
         val title = TextView(this).apply {
-            text = "LLM BT"
+            text = ""
             textSize = 20f
             setTextColor(Color.rgb(32, 33, 36))
             setTypeface(null, android.graphics.Typeface.BOLD)
@@ -161,13 +169,6 @@ Não invente informações quando não souber a resposta."""
         titleRow.addView(menuButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         titleRow.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
         titleRow.addView(engineButton, LinearLayout.LayoutParams(dp(48), dp(48)))
-
-        generationStatsText = TextView(this).apply {
-            text = "Tokens: 0  |  tok/s: —"
-            textSize = 12f
-            setTextColor(Color.rgb(110, 110, 110))
-            setPadding(dp(4), 0, dp(4), dp(4))
-        }
 
         systemPromptButton = Button(this).apply {
             text = "System"
@@ -205,7 +206,6 @@ Não invente informações quando não souber a resposta."""
         }
 
         topBar.addView(titleRow, LinearLayout.LayoutParams(-1, dp(48)))
-        topBar.addView(generationStatsText, LinearLayout.LayoutParams(-1, dp(24)))
 
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -230,15 +230,15 @@ Não invente informações quando não souber a resposta."""
             minLines = 1
             maxLines = 4
             setPadding(dp(16), dp(10), dp(8), dp(10))
-            background = roundedBackground(Color.rgb(245, 245, 245), 24f)
+            background = roundedBackground(inputSurfaceColor(), 24f)
         }
 
         sendButton = Button(this).apply {
             text = "➤"
             textSize = 22f
             isAllCaps = false
-            setTextColor(Color.rgb(255, 255, 255))
-            background = roundedBackground(Color.rgb(70, 70, 70), 22f)
+            setTextColor(Color.WHITE)
+            background = roundedBackground(sendButtonColor(), 22f)
             setPadding(0, 0, 0, 0)
             contentDescription = "Enviar mensagem"
             setOnClickListener { sendMessage() }
@@ -257,7 +257,7 @@ Não invente informações quando não souber a resposta."""
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(dp(12), dp(8), dp(12), dp(10))
-            background = roundedBackground(Color.rgb(245, 245, 245), 28f)
+            background = roundedBackground(inputSurfaceColor(), 28f)
 
             addView(
                 input,
@@ -283,7 +283,7 @@ Não invente informações quando não souber a resposta."""
 
         val mainContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(backgroundColor())
 
             addView(topBar, LinearLayout.LayoutParams(-1, -2))
             addView(scrollView, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -291,7 +291,7 @@ Não invente informações quando não souber a resposta."""
         }
 
         root = FrameLayout(this).apply {
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(backgroundColor())
             addView(mainContent, FrameLayout.LayoutParams(-1, -1))
         }
 
@@ -322,6 +322,29 @@ Não invente informações quando não souber a resposta."""
         AppLogger.write("MainActivity.onCreate completed")
     }
 
+    private fun backgroundColor(): Int = if (isDarkMode()) Color.rgb(18, 18, 18) else Color.WHITE
+    private fun primaryTextColor(): Int = if (isDarkMode()) Color.rgb(238, 238, 238) else Color.rgb(32, 33, 36)
+    private fun secondaryTextColor(): Int = if (isDarkMode()) Color.rgb(170, 170, 170) else Color.rgb(110, 110, 110)
+    private fun mutedTextColor(): Int = if (isDarkMode()) Color.rgb(145, 145, 145) else Color.rgb(145, 145, 145)
+    private fun hintTextColor(): Int = if (isDarkMode()) Color.rgb(150, 150, 150) else Color.rgb(125, 125, 125)
+    private fun inputSurfaceColor(): Int = if (isDarkMode()) Color.rgb(35, 35, 35) else Color.rgb(245, 245, 245)
+    private fun sendButtonColor(): Int = if (isDarkMode()) Color.rgb(80, 80, 80) else Color.rgb(70, 70, 70)
+    private fun userBubbleColor(): Int = if (isDarkMode()) Color.rgb(45, 45, 45) else Color.rgb(232, 232, 232)
+    private fun selectedChatColor(): Int = if (isDarkMode()) Color.rgb(48, 48, 48) else Color.rgb(238, 238, 238)
+    private fun isDarkMode(): Boolean = preferences.getBoolean(DARK_MODE_KEY, false)
+
+    private fun applySystemBarTheme() {
+        val dark = isDarkMode()
+        window.statusBarColor = backgroundColor()
+        window.navigationBarColor = backgroundColor()
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = if (dark) {
+            0
+        } else {
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+    }
+
     private fun showEngineMenu() {
         lateinit var dialog: androidx.appcompat.app.AlertDialog
 
@@ -349,6 +372,18 @@ Não invente informações quando não souber a resposta."""
                     bottomMargin = dp(4)
                 }
             )
+        }
+
+        addAction(if (isDarkMode()) "Modo claro" else "Modo escuro", true) {
+            preferences.edit().putBoolean(DARK_MODE_KEY, !isDarkMode()).apply()
+            delegate.localNightMode = if (isDarkMode()) {
+                AppCompatDelegate.MODE_NIGHT_YES
+            } else {
+                AppCompatDelegate.MODE_NIGHT_NO
+            }
+            applySystemBarTheme()
+            dialog.dismiss()
+            recreate()
         }
 
         addAction("Importar GGUF", true) {
@@ -479,9 +514,9 @@ Não invente informações quando não souber a resposta."""
         currentChat = null
         streamingText.clear()
         currentAssistantMessage = null
+        currentAssistantStatsText = null
         streamingResponseStarted = false
         chat.removeAllViews()
-        generationStatsText.text = "Tokens: 0  |  tok/s: —"
         addStatusMessage("Novo chat", dark = false)
         closeDrawer()
         scrollToBottom()
@@ -495,7 +530,7 @@ Não invente informações quando não souber a resposta."""
             val empty = TextView(this).apply {
                 text = "Nenhum chat salvo ainda.\n\nA primeira mensagem cria um chat."
                 textSize = 14f
-                setTextColor(Color.rgb(120, 120, 120))
+                setTextColor(secondaryTextColor())
                 setPadding(dp(12), dp(20), dp(12), dp(20))
             }
             drawerChats.addView(empty)
@@ -507,7 +542,7 @@ Não invente informações quando não souber a resposta."""
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(14), dp(10), dp(14), dp(10))
                 background = roundedBackground(
-                    if (session.id == currentChat?.id) Color.rgb(238, 238, 238) else Color.TRANSPARENT,
+                    if (session.id == currentChat?.id) selectedChatColor() else Color.TRANSPARENT,
                     12f
                 )
                 setOnClickListener { selectChat(session) }
@@ -516,14 +551,14 @@ Não invente informações quando não souber a resposta."""
             val title = TextView(this).apply {
                 text = session.title
                 textSize = 15f
-                setTextColor(Color.rgb(35, 35, 35))
+                setTextColor(primaryTextColor())
                 maxLines = 2
             }
 
             val model = TextView(this).apply {
                 text = if (session.modelName.isBlank()) "Modelo não disponível" else session.modelName
                 textSize = 12f
-                setTextColor(Color.rgb(120, 120, 120))
+                setTextColor(secondaryTextColor())
                 setPadding(0, dp(3), 0, 0)
                 maxLines = 1
             }
@@ -603,7 +638,6 @@ Não invente informações quando não souber a resposta."""
 
                 runOnUiThread {
                     renderChatSession(session)
-                    generationStatsText.text = "Tokens: 0  |  tok/s: —  |  threads: " + generationThreads
                     input.isEnabled = true
                     sendButton.isEnabled = true
                     systemPromptButton.isEnabled = true
@@ -632,6 +666,7 @@ Não invente informações quando não souber a resposta."""
     private fun renderChatSession(session: ChatSession) {
         chat.removeAllViews()
         currentAssistantMessage = null
+        currentAssistantStatsText = null
         streamingResponseStarted = false
         streamingText.clear()
 
@@ -750,7 +785,7 @@ Não invente informações quando não souber a resposta."""
                     if (!streamingResponseStarted) {
                         currentAssistantMessage?.apply {
                             text = "LLM: $result"
-                            setTextColor(Color.rgb(32, 33, 36))
+                            setTextColor(primaryTextColor())
                         }
                     }
 
@@ -779,7 +814,7 @@ Não invente informações quando não souber a resposta."""
                 runOnUiThread {
                     currentAssistantMessage?.apply {
                         text = "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName)
-                        setTextColor(Color.rgb(170, 40, 40))
+                        setTextColor(Color.rgb(235, 90, 90))
                     } ?: addStatusMessage(
                         "ERRO: " + (throwable.message ?: throwable.javaClass.simpleName),
                         dark = false
@@ -805,7 +840,7 @@ Não invente informações quando não souber a resposta."""
             currentAssistantMessage?.let { messageView ->
                 if (!streamingResponseStarted) {
                     messageView.text = "LLM:"
-                    messageView.setTextColor(Color.rgb(32, 33, 36))
+                    messageView.setTextColor(primaryTextColor())
                     streamingResponseStarted = true
                 }
                 messageView.append(piece)
@@ -821,7 +856,10 @@ Não invente informações quando não souber a resposta."""
             } else {
                 "—"
             }
-            generationStatsText.text = "Tokens: $tokens  |  tok/s: $speed"
+            currentAssistantStatsText?.apply {
+                text = "Tokens: $tokens  ·  $speed tok/s"
+                visibility = View.VISIBLE
+            }
         }
     }
 
@@ -829,9 +867,9 @@ Não invente informações quando não souber a resposta."""
         val bubble = TextView(this).apply {
             text = "Você\n$message"
             textSize = 16f
-            setTextColor(Color.rgb(35, 35, 35))
+            setTextColor(primaryTextColor())
             setPadding(dp(16), dp(11), dp(16), dp(11))
-            background = roundedBackground(Color.rgb(232, 232, 232), 18f)
+            background = roundedBackground(userBubbleColor(), 18f)
         }
 
         val params = LinearLayout.LayoutParams(
@@ -849,15 +887,30 @@ Não invente informações quando não souber a resposta."""
     }
 
     private fun addAssistantMessage(message: String, loading: Boolean): TextView {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
         val view = TextView(this).apply {
             text = message
             textSize = 16f
             setTextColor(
-                if (loading) Color.rgb(125, 125, 125)
-                else Color.rgb(32, 33, 36)
+                if (loading) hintTextColor()
+                else primaryTextColor()
             )
-            setPadding(dp(4), dp(8), dp(4), dp(8))
+            setPadding(dp(4), dp(8), dp(4), dp(2))
         }
+
+        val stats = TextView(this).apply {
+            text = ""
+            textSize = 11f
+            setTextColor(secondaryTextColor())
+            setPadding(dp(4), dp(0), dp(4), dp(6))
+            visibility = if (loading) View.VISIBLE else View.GONE
+        }
+
+        container.addView(view, LinearLayout.LayoutParams(-1, -2))
+        container.addView(stats, LinearLayout.LayoutParams(-1, -2))
 
         val params = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -867,7 +920,10 @@ Não invente informações quando não souber a resposta."""
             bottomMargin = dp(2)
         }
 
-        chat.addView(view, params)
+        chat.addView(container, params)
+        if (loading) {
+            currentAssistantStatsText = stats
+        }
         scrollToBottom()
         return view
     }
@@ -877,8 +933,8 @@ Não invente informações quando não souber a resposta."""
             text = message
             textSize = if (dark) 15f else 14f
             setTextColor(
-                if (dark) Color.rgb(75, 75, 75)
-                else Color.rgb(145, 145, 145)
+                if (dark) secondaryTextColor()
+                else mutedTextColor()
             )
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
@@ -902,7 +958,7 @@ Não invente informações quando não souber a resposta."""
             minLines = 12
             maxLines = 18
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = roundedBackground(Color.rgb(245, 245, 245), 12f)
+            background = roundedBackground(inputSurfaceColor(), 12f)
             setSelectAllOnFocus(false)
         }
 
@@ -962,7 +1018,7 @@ Não invente informações quando não souber a resposta."""
 
         val generationLabel = TextView(this).apply {
             textSize = 13f
-            setTextColor(Color.rgb(75, 75, 75))
+            setTextColor(secondaryTextColor())
             setPadding(0, dp(8), 0, dp(2))
         }
 
@@ -1067,7 +1123,7 @@ Não invente informações quando não souber a resposta."""
             container.addView(TextView(this).apply {
                 text = label
                 textSize = 13f
-                setTextColor(Color.rgb(75, 75, 75))
+                setTextColor(secondaryTextColor())
                 setPadding(0, dp(6), 0, dp(2))
             })
             return EditText(this).apply {
@@ -1078,7 +1134,7 @@ Não invente informações quando não souber a resposta."""
                     InputType.TYPE_NUMBER_FLAG_DECIMAL or
                     InputType.TYPE_NUMBER_FLAG_SIGNED
                 setPadding(dp(12), dp(8), dp(12), dp(8))
-                background = roundedBackground(Color.rgb(245, 245, 245), 10f)
+                background = roundedBackground(inputSurfaceColor(), 10f)
                 container.addView(this, LinearLayout.LayoutParams(-1, dp(46)))
             }
         }
