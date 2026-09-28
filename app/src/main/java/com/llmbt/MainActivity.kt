@@ -149,6 +149,15 @@ Não invente informações quando não souber a resposta."""
             setTypeface(null, android.graphics.Typeface.BOLD)
         }
 
+        val engineButton = TextView(this).apply {
+            text = "⚙"
+            textSize = 25f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(32, 33, 36))
+            contentDescription = "Abrir engine"
+            setOnClickListener { showEngineMenu() }
+        }
+
         val importButton = Button(this).apply {
             text = "Importar GGUF"
             textSize = 12f
@@ -158,18 +167,13 @@ Não invente informações quando não souber a resposta."""
 
         titleRow.addView(menuButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         titleRow.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
-        titleRow.addView(importButton, LinearLayout.LayoutParams(dp(125), dp(48)))
+        titleRow.addView(engineButton, LinearLayout.LayoutParams(dp(48), dp(48)))
 
         generationStatsText = TextView(this).apply {
             text = "Tokens: 0  |  tok/s: —"
             textSize = 12f
             setTextColor(Color.rgb(110, 110, 110))
             setPadding(dp(4), 0, dp(4), dp(4))
-        }
-
-        val settingsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
         }
 
         systemPromptButton = Button(this).apply {
@@ -193,18 +197,6 @@ Não invente informações quando não souber a resposta."""
             setOnClickListener { showThreadsDialog() }
         }
 
-        settingsRow.addView(systemPromptButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(3) })
-        settingsRow.addView(samplingButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-            marginStart = dp(3)
-            marginEnd = dp(3)
-        })
-        settingsRow.addView(threadsButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3) })
-
-        val modelActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
         reloadModelsButton = Button(this).apply {
             text = "Recarregar modelos"
             textSize = 12f
@@ -219,13 +211,8 @@ Não invente informações quando não souber a resposta."""
             setOnClickListener { resetChatHistory() }
         }
 
-        modelActionsRow.addView(reloadModelsButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(3) })
-        modelActionsRow.addView(resetHistoryButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3) })
-
         topBar.addView(titleRow, LinearLayout.LayoutParams(-1, dp(48)))
         topBar.addView(generationStatsText, LinearLayout.LayoutParams(-1, dp(24)))
-        topBar.addView(settingsRow, LinearLayout.LayoutParams(-1, dp(44)))
-        topBar.addView(modelActionsRow, LinearLayout.LayoutParams(-1, dp(44)))
 
         chat = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -340,6 +327,61 @@ Não invente informações quando não souber a resposta."""
         refreshDrawerChats()
 
         AppLogger.write("MainActivity.onCreate completed")
+    }
+
+    private fun showEngineMenu() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+
+        fun addAction(button: Button) {
+            container.addView(
+                button,
+                LinearLayout.LayoutParams(-1, dp(48)).apply {
+                    bottomMargin = dp(4)
+                }
+            )
+        }
+
+        addAction(importButtonForEngine())
+        addAction(systemPromptButton)
+        addAction(samplingButton)
+        addAction(threadsButton)
+        addAction(reloadModelsButton)
+        addAction(resetHistoryButton)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Engine")
+            .setView(container)
+            .setNegativeButton("Fechar", null)
+            .create()
+
+        importButtonForEngine().apply {
+            setOnClickListener {
+                dialog.dismiss()
+                openModelPicker()
+            }
+        }.also { importButton ->
+            container.removeViewAt(0)
+            container.addView(
+                importButton,
+                0,
+                LinearLayout.LayoutParams(-1, dp(48)).apply {
+                    bottomMargin = dp(4)
+                }
+            )
+        }
+
+        dialog.show()
+    }
+
+    private fun importButtonForEngine(): Button {
+        return Button(this).apply {
+            text = "Importar GGUF"
+            textSize = 13f
+            isAllCaps = false
+        }
     }
 
     private fun setupDrawer() {
