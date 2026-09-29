@@ -771,7 +771,8 @@ class MainActivity : AppCompatActivity() {
         resetHistoryButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
-        currentAssistantMessage = addAssistantMessage("Reading...", loading = true)
+        prepareThinkingPlaceholder()
+        currentAssistantMessage = addAssistantMessage("Thinking...", loading = true)
         input.text.clear()
         AppLogger.write("Generation requested")
 
@@ -786,7 +787,14 @@ class MainActivity : AppCompatActivity() {
                     if (!streamingResponseStarted) {
                         val cleanResult = result.substringBefore("\n\n[perf]").trim()
                         val parsed = splitThinking(cleanResult)
-                        if (parsed.first.isNotBlank()) addThinkingMessage(parsed.first, false)
+                        if (parsed.first.isNotBlank()) {
+                            if (currentThinkingContainer == null) prepareThinkingPlaceholder()
+                            currentThinkingMessage?.text = parsed.first
+                            currentThinkingContainer?.visibility = View.VISIBLE
+                            finishThinking()
+                        } else {
+                            removeEmptyThinking()
+                        }
                         currentAssistantMessage?.apply {
                             text = parsed.second
                             setTextColor(primaryTextColor())
@@ -914,9 +922,54 @@ class MainActivity : AppCompatActivity() {
         if (thinkingActive) finishThinking()
     }
 
+    private fun prepareThinkingPlaceholder() {
+        currentThinkingContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = roundedBackground(inputSurfaceColor(), 14f)
+            visibility = View.GONE
+        }
+
+        val header = TextView(this).apply {
+            text = "Thinking · aberto"
+            textSize = 13f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(secondaryTextColor())
+        }
+
+        val body = TextView(this).apply {
+            text = ""
+            textSize = 14f
+            setTextColor(secondaryTextColor())
+            setPadding(0, dp(8), 0, 0)
+            visibility = View.VISIBLE
+        }
+
+        header.setOnClickListener {
+            body.visibility = if (body.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            header.text = if (body.visibility == View.VISIBLE) "Thinking · aberto" else "Thinking"
+        }
+
+        currentThinkingContainer!!.addView(header)
+        currentThinkingContainer!!.addView(body)
+
+        val index = chat.childCount
+        chat.addView(
+            currentThinkingContainer,
+            index,
+            LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = dp(6)
+                bottomMargin = dp(4)
+            }
+        )
+        currentThinkingMessage = body
+    }
+
     private fun startThinking() {
         thinkingActive = true
-        if (currentThinkingContainer == null) addThinkingMessage("", true)
+        currentThinkingContainer?.visibility = View.VISIBLE
+        currentThinkingMessage?.visibility = View.VISIBLE
+        scrollToBottom()
     }
 
     private fun appendThinkingText(text: String) {
@@ -928,6 +981,16 @@ class MainActivity : AppCompatActivity() {
         currentThinkingMessage?.visibility = View.GONE
         currentThinkingContainer?.getChildAt(0)?.let { header ->
             (header as TextView).text = "Thinking"
+        }
+    }
+
+    private fun removeEmptyThinking() {
+        val body = currentThinkingMessage
+        val container = currentThinkingContainer
+        if (container != null && body != null && body.text.toString().isBlank()) {
+            chat.removeView(container)
+            currentThinkingContainer = null
+            currentThinkingMessage = null
         }
     }
 
