@@ -778,6 +778,9 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val result = generateText(message)
+                runOnUiThread {
+                    flushThinkingParser()
+                }
                 AppLogger.write("Generation result: " + result.replace("\n", " | "))
                 runOnUiThread {
                     if (!streamingResponseStarted) {
@@ -896,6 +899,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return 0
+    }
+
+    private fun flushThinkingParser() {
+        if (thinkingParseBuffer.isNotEmpty()) {
+            val remaining = thinkingParseBuffer.toString()
+            thinkingParseBuffer.clear()
+            if (thinkingActive) {
+                appendThinkingText(remaining)
+            } else {
+                appendAnswerText(remaining)
+            }
+        }
+        if (thinkingActive) finishThinking()
     }
 
     private fun startThinking() {
