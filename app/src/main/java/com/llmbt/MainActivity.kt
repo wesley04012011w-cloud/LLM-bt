@@ -50,6 +50,9 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var streamingResponseStarted = false
     private var currentAssistantMessage: TextView? = null
     private var currentAssistantStatsText: TextView? = null
+    private var currentThinkingContainer: LinearLayout? = null
+    private var currentThinkingMessage: TextView? = null
+    private var thinkingActive = false
 
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
@@ -314,7 +317,7 @@ class MainActivity : AppCompatActivity() {
     private fun secondaryTextColor(): Int = if (isDarkMode()) Color.rgb(170, 170, 170) else Color.rgb(110, 110, 110)
     private fun mutedTextColor(): Int = if (isDarkMode()) Color.rgb(145, 145, 145) else Color.rgb(145, 145, 145)
     private fun hintTextColor(): Int = if (isDarkMode()) Color.rgb(150, 150, 150) else Color.rgb(125, 125, 125)
-    private fun inputSurfaceColor(): Int = if (isDarkMode()) Color.rgb(35, 35, 35) else Color.rgb(245, 245, 245)
+    private fun inputSurfaceColor(): Int = if (isDarkMode()) Color.BLACK else Color.rgb(245, 245, 245)
     private fun sendButtonColor(): Int = if (isDarkMode()) Color.rgb(80, 80, 80) else Color.rgb(70, 70, 70)
     private fun userBubbleColor(): Int = if (isDarkMode()) Color.rgb(45, 45, 45) else Color.rgb(232, 232, 232)
     private fun selectedChatColor(): Int = if (isDarkMode()) Color.rgb(48, 48, 48) else Color.rgb(238, 238, 238)
@@ -502,6 +505,9 @@ class MainActivity : AppCompatActivity() {
         streamingText.clear()
         currentAssistantMessage = null
         currentAssistantStatsText = null
+        currentThinkingContainer = null
+        currentThinkingMessage = null
+        thinkingActive = false
         streamingResponseStarted = false
         chat.removeAllViews()
         showTransientCard("Novo chat")
@@ -654,6 +660,9 @@ class MainActivity : AppCompatActivity() {
         chat.removeAllViews()
         currentAssistantMessage = null
         currentAssistantStatsText = null
+        currentThinkingContainer = null
+        currentThinkingMessage = null
+        thinkingActive = false
         streamingResponseStarted = false
         streamingText.clear()
 
@@ -661,7 +670,9 @@ class MainActivity : AppCompatActivity() {
             if (message.role == "user") {
                 addUserMessage(message.content)
             } else if (message.role == "assistant") {
-                addAssistantMessage("LLM: " + message.content, loading = false)
+                val parsed = splitThinking(message.content)
+                if (parsed.first.isNotBlank()) addThinkingMessage(parsed.first, false)
+                addAssistantMessage(parsed.second, loading = false)
             }
         }
         scrollToBottom()
@@ -769,8 +780,10 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!streamingResponseStarted) {
                         val cleanResult = result.substringBefore("\n\n[perf]").trim()
+                        val parsed = splitThinking(cleanResult)
+                        if (parsed.first.isNotBlank()) addThinkingMessage(parsed.first, false)
                         currentAssistantMessage?.apply {
-                            text = cleanResult
+                            text = parsed.second
                             setTextColor(primaryTextColor())
                         }
                     }
@@ -778,7 +791,7 @@ class MainActivity : AppCompatActivity() {
                     val assistantContent = if (streamingResponseStarted) {
                         streamingText.toString()
                     } else {
-                        result.substringBefore("\n\n[perf]").trim()
+                        splitThinking(result.substringBefore("\n\n[perf]").trim()).second
                     }
                     if (assistantContent.isNotBlank()) {
                         currentChat?.messages?.add(ChatMessage("assistant", assistantContent))
@@ -818,18 +831,110 @@ class MainActivity : AppCompatActivity() {
 
 
     fun appendGeneratedToken(piece: String) {
-        streamingText.append(piece)
         runOnUiThread {
-            currentAssistantMessage?.let { messageView ->
-                if (!streamingResponseStarted) {
-                    messageView.text = ""
-                    messageView.setTextColor(primaryTextColor())
-                    streamingResponseStarted = true
-                }
-                messageView.append(piece)
-                scrollToBottom()
-            }
+            processGeneratedPiece(piece)
+            scrollToBottom()
         }
+    }
+
+    private fun processGeneratedPiece(piece: String) {
+        var text = piece
+        while (text.isNotEmpty()) {
+            if (thinkingActive) {
+                val end = text.indexOf("</think>", ignoreCase = true)
+                if (end >= 0) {
+                    appendThinkingText(text.substring(0, end))
+                    text = text.substring(end + 8)
+                    finishThinking()
+                    continue
+                }
+                appendThinkingText(text)
+                return
+            }
+
+            val start = text.indexOf("<think>", ignoreCase = true)
+            if (start >= 0) {
+                appendAnswerText(text.substring(0, start))
+                startThinking()
+                text = text.substring(start + 7)
+                continue
+            }
+
+            appendAnswerText(text)
+            return
+        }
+    }
+
+    private fun startThinking() {
+        thinkingActive = true
+        if (currentThinkingContainer == null) addThinkingMessage("", true)
+    }
+
+    private fun appendThinkingText(text: String) {
+        if (text.isNotEmpty()) currentThinkingMessage?.append(text)
+    }
+
+    private fun finishThinking() {
+        thinkingActive = false
+        currentThinkingMessage?.visibility = View.GONE
+        currentThinkingContainer?.getChildAt(0)?.let { header ->
+            (header as TextView).text = "Thinking"
+        }
+    }
+
+    private fun appendAnswerText(text: String) {
+        if (text.isEmpty()) return
+        streamingText.append(text)
+        currentAssistantMessage?.let { messageView ->
+            if (!streamingResponseStarted) {
+                messageView.text = ""
+                messageView.setTextColor(primaryTextColor())
+                streamingResponseStarted = true
+            }
+            messageView.append(text)
+        }
+    }
+
+    private fun addThinkingMessage(message: String, expanded: Boolean) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = roundedBackground(inputSurfaceColor(), 14f)
+        }
+        val header = TextView(this).apply {
+            text = if (expanded) "Thinking · aberto" else "Thinking"
+            textSize = 13f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(secondaryTextColor())
+        }
+        val body = TextView(this).apply {
+            text = message
+            textSize = 14f
+            setTextColor(secondaryTextColor())
+            setPadding(0, dp(8), 0, 0)
+            visibility = if (expanded) View.VISIBLE else View.GONE
+        }
+        header.setOnClickListener {
+            body.visibility = if (body.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            header.text = if (body.visibility == View.VISIBLE) "Thinking · aberto" else "Thinking"
+        }
+        container.addView(header)
+        container.addView(body)
+        chat.addView(container, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(6)
+            bottomMargin = dp(4)
+        })
+        currentThinkingContainer = container
+        currentThinkingMessage = body
+    }
+
+    private fun splitThinking(content: String): Pair<String, String> {
+        val start = content.indexOf("<think>", ignoreCase = true)
+        if (start < 0) return "" to content
+        val end = content.indexOf("</think>", start + 7, ignoreCase = true)
+        if (end < 0) return content.substring(start + 7) to content.substring(0, start).trim()
+        return content.substring(start + 7, end) to
+            content.removeRange(start, end + 8).trim()
     }
 
     fun updateGenerationState(state: String) {
