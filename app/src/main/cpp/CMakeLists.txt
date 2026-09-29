@@ -26,4 +26,4 @@ FetchContent_MakeAvailable(llama)
 
 add_library(llmbt SHARED native-lib.cpp)
 
-target_link_libraries(llmbt PRIVATE llama)
+target_link_libraries(llmbt PRIVATE llama llama-common)
