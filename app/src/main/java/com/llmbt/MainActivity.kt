@@ -70,6 +70,14 @@ class MainActivity : AppCompatActivity() {
     private external fun setThreadConfig(generationThreads: Int, batchThreads: Int)
     private external fun resetConversation()
     private external fun restoreConversationHistory(roles: Array<String>, contents: Array<String>)
+    fun setNativeThinkingState(enabled: Boolean, endTag: String) {
+        runOnUiThread {
+            if (enabled) {
+                prepareThinkingPlaceholder()
+                startThinking()
+            }
+        }
+    }
 
     private data class ChatMessage(val role: String, val content: String)
 
