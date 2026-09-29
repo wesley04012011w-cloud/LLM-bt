@@ -771,8 +771,9 @@ class MainActivity : AppCompatActivity() {
         resetHistoryButton.isEnabled = false
         streamingResponseStarted = false
         addUserMessage(message)
-        prepareThinkingPlaceholder()
-        currentAssistantMessage = addAssistantMessage("Thinking...", loading = true)
+        // O estado inicial é o processamento do prompt. Só mostramos
+        // "Thinking" se o próprio modelo emitir <think>...</think>.
+        currentAssistantMessage = addAssistantMessage("Reading...", loading = true)
         input.text.clear()
         AppLogger.write("Generation requested")
 
