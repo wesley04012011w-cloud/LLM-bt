@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private var currentThinkingContainer: LinearLayout? = null
     private var currentThinkingMessage: TextView? = null
     private var thinkingActive = false
+    private val thinkingParseBuffer = StringBuilder()
 
     private external fun stringFromNative(): String
     private external fun loadModel(path: String): String
@@ -508,6 +509,7 @@ class MainActivity : AppCompatActivity() {
         currentThinkingContainer = null
         currentThinkingMessage = null
         thinkingActive = false
+        thinkingParseBuffer.clear()
         streamingResponseStarted = false
         chat.removeAllViews()
         showTransientCard("Novo chat")
@@ -838,31 +840,62 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processGeneratedPiece(piece: String) {
-        var text = piece
-        while (text.isNotEmpty()) {
+        thinkingParseBuffer.append(piece)
+
+        while (thinkingParseBuffer.isNotEmpty()) {
+            val text = thinkingParseBuffer.toString()
+
             if (thinkingActive) {
                 val end = text.indexOf("</think>", ignoreCase = true)
                 if (end >= 0) {
                     appendThinkingText(text.substring(0, end))
-                    text = text.substring(end + 8)
+                    thinkingParseBuffer.delete(0, end + 8)
                     finishThinking()
                     continue
                 }
-                appendThinkingText(text)
+
+                val keep = longestTagPrefixSuffix(text, "</think>")
+                if (keep > 0) {
+                    appendThinkingText(text.dropLast(keep))
+                    thinkingParseBuffer.delete(0, text.length - keep)
+                } else {
+                    appendThinkingText(text)
+                    thinkingParseBuffer.clear()
+                }
                 return
             }
 
             val start = text.indexOf("<think>", ignoreCase = true)
             if (start >= 0) {
                 appendAnswerText(text.substring(0, start))
+                thinkingParseBuffer.delete(0, start + 7)
                 startThinking()
-                text = text.substring(start + 7)
                 continue
             }
 
-            appendAnswerText(text)
+            val keepOpen = longestTagPrefixSuffix(text, "<think>")
+            val keepClose = longestTagPrefixSuffix(text, "</think>")
+            val keep = max(keepOpen, keepClose)
+
+            if (keep > 0) {
+                appendAnswerText(text.dropLast(keep))
+                thinkingParseBuffer.delete(0, text.length - keep)
+            } else {
+                appendAnswerText(text)
+                thinkingParseBuffer.clear()
+            }
             return
         }
+    }
+
+    private fun longestTagPrefixSuffix(text: String, tag: String): Int {
+        val maxLength = minOf(text.length, tag.length - 1)
+        for (length in maxLength downTo 1) {
+            if (text.takeLast(length).equals(tag.take(length), ignoreCase = true)) {
+                return length
+            }
+        }
+        return 0
     }
 
     private fun startThinking() {
